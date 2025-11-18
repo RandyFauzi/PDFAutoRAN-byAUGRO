@@ -1,3 +1,4 @@
+
 /*
   Warnings:
 
@@ -5,7 +6,7 @@
 
 */
 -- AlterTable
-ALTER TABLE `user` ADD COLUMN `freeInitialGranted` BOOLEAN NOT NULL DEFAULT false,
+ALTER TABLE `User` ADD COLUMN `freeInitialGranted` BOOLEAN NOT NULL DEFAULT false,
     MODIFY `plan` ENUM('FREE', 'BASIC', 'PRO', 'BUSINESS') NOT NULL DEFAULT 'FREE';
 
 -- CreateTable

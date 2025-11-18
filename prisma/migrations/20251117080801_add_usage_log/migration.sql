@@ -5,7 +5,7 @@
 
 */
 -- AlterTable
-ALTER TABLE `user` MODIFY `plan` VARCHAR(191) NOT NULL DEFAULT 'FREE';
+ALTER TABLE `User` MODIFY `plan` VARCHAR(191) NOT NULL DEFAULT 'FREE';
 
 -- CreateTable
 CREATE TABLE `UsageLog` (
