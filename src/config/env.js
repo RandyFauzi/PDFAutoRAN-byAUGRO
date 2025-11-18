@@ -1,0 +1,19 @@
+const dotenv = require('dotenv');
+
+// Load variabel dari file .env ke process.env
+dotenv.config();
+
+// Objek env yang akan dipakai di seluruh aplikasi
+const env = {
+  port: process.env.PORT || 4000,
+  databaseUrl: process.env.DATABASE_URL,
+  jwtSecret: process.env.JWT_SECRET || 'default-secret',
+  nodeEnv: process.env.NODE_ENV || 'development',
+
+  // Support Admin Emails: "admin1@gmail.com,admin2@gmail.com"
+  adminEmails: process.env.ADMIN_EMAILS
+    ? process.env.ADMIN_EMAILS.split(',').map(e => e.trim())
+    : []
+};
+
+module.exports = env;

@@ -1,0 +1,41 @@
+{
+  "name": "pdf-autorun",
+  "version": "1.0.0",
+  "description": "PDF AUTORUN - REST API untuk HTML-to-PDF, merge PDF, dan stamp PNG berbasis sistem credits.",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "nodemon src/server.js",
+    "start": "NODE_ENV=production node src/server.js",
+    "prisma:migrate": "npx prisma migrate dev --name init",
+    "prisma:generate": "npx prisma generate"
+  },
+  "keywords": [
+    "pdf",
+    "html-to-pdf",
+    "puppeteer",
+    "api",
+    "automation",
+    "n8n"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@prisma/client": "^5.18.0",
+    "axios": "^1.13.2",
+    "bcrypt": "^5.1.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-rate-limit": "^8.2.1",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "morgan": "^1.10.1",
+    "node-cron": "^4.2.1",
+    "pdf-lib": "^1.17.1",
+    "puppeteer": "^24.30.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0",
+    "prisma": "^5.18.0"
+  }
+}

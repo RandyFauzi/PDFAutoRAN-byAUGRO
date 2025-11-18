@@ -1,0 +1,82 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------- Enums ----------------
+
+enum BillingCycle {
+  MONTHLY
+  YEARLY
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  CANCELED
+  EXPIRED
+}
+
+enum Plan {
+  FREE
+  BASIC
+  PRO
+  BUSINESS
+}
+
+// ---------------- Models ----------------
+
+model User {
+  id                 Int      @id @default(autoincrement())
+  email              String   @unique
+  password           String
+  credits            Int      @default(0)
+  plan               String   @default("FREE")
+  freeInitialGranted Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  subscription Subscription?
+  usageLogs    UsageLog[]
+  apiKeys      ApiKey[]
+}
+
+model Subscription {
+  id     Int  @id @default(autoincrement())
+  userId Int  @unique
+  user   User @relation(fields: [userId], references: [id])
+
+  plan         Plan // BASIC | PRO | BUSINESS (FREE biasanya tanpa subscription)
+  billingCycle BillingCycle // MONTHLY | YEARLY
+  status       SubscriptionStatus @default(ACTIVE)
+
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model UsageLog {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  operation   String
+  creditsUsed Int
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model ApiKey {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  label     String
+  keyHash   String   // hashed API key
+  createdAt DateTime @default(now())
+  revokedAt DateTime?
+
+  user      User     @relation(fields: [userId], references: [id])
+}
