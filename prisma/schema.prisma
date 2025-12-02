@@ -3,9 +3,11 @@ generator client {
 }
 
 datasource db {
-  provider = "mysql"
-  url      = env("DATABASE_URL")
+  provider          = "mysql"
+  url               = env("DATABASE_URL")
+  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
 }
+
 
 // ---------------- Enums ----------------
 
@@ -71,12 +73,15 @@ model UsageLog {
 }
 
 model ApiKey {
-  id        Int      @id @default(autoincrement())
-  userId    Int
-  label     String
-  keyHash   String   // hashed API key
-  createdAt DateTime @default(now())
-  revokedAt DateTime?
+  id                Int      @id @default(autoincrement())
+  userId            Int
+  label             String
+  keyHash           String 
+  plainKeyEncrypted String?  
+  lastUsedAt        DateTime? 
+  createdAt         DateTime @default(now())
+  revokedAt         DateTime?
 
   user      User     @relation(fields: [userId], references: [id])
 }
+
