@@ -11,6 +11,7 @@ const authRoutes = require('./routes/auth.routes');
 const pdfRoutes = require('./routes/pdf.routes');
 const adminRoutes = require('./routes/admin.routes');
 const apiKeyRoutes = require('./routes/apiKey.routes');
+const usageRoutes = require('./routes/usage.routes');
 const { notFound, errorHandler } = require('./middleware/errorHandler');
 
 const app = express();
@@ -60,6 +61,7 @@ app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/pdf', pdfRoutes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/api-keys', apiKeyRoutes);
+app.use('/api/v1/usage', usageRoutes);
 
 // ---------- Error handlers ----------
 app.use(notFound);
