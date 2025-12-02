@@ -77,7 +77,7 @@ model ApiKey {
   userId            Int
   label             String
   keyHash           String 
-  plainKeyEncrypted String?  
+  plainKeyEncrypted String?  @db.Text 
   lastUsedAt        DateTime? 
   createdAt         DateTime @default(now())
   revokedAt         DateTime?
