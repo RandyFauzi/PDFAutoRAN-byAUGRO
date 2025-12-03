@@ -6,12 +6,14 @@ const rateLimit = require('express-rate-limit');
 const morgan = require('morgan');
 const env = require('./config/env');
 
+
 // Import routes
 const authRoutes = require('./routes/auth.routes');
 const pdfRoutes = require('./routes/pdf.routes');
 const adminRoutes = require('./routes/admin.routes');
 const apiKeyRoutes = require('./routes/apiKey.routes');
 const usageRoutes = require('./routes/usage.routes');
+const midtransRoutes = require('./routes/midtrans.routes');
 const { notFound, errorHandler } = require('./middleware/errorHandler');
 
 const app = express();
@@ -62,6 +64,7 @@ app.use('/api/v1/pdf', pdfRoutes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/api-keys', apiKeyRoutes);
 app.use('/api/v1/usage', usageRoutes);
+app.use('/api/v1/payments', midtransRoutes);
 
 // ---------- Error handlers ----------
 app.use(notFound);

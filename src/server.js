@@ -1,6 +1,7 @@
 const env = require('./config/env');
 const app = require('./app');
 const { startSubscriptionResetScheduler } = require('./jobs/subscriptionReset.job');
+const midtransRoutes = require('./routes/midtrans.routes');
 
 const PORT = env.port || process.env.PORT || 3000;
 
