@@ -38,8 +38,10 @@ model User {
   credits            Int      @default(0)
   plan               String   @default("FREE")
   freeInitialGranted Boolean  @default(false)
+  transactions Transaction[]
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
+  
 
   subscription Subscription?
   usageLogs    UsageLog[]
@@ -85,3 +87,21 @@ model ApiKey {
   user      User     @relation(fields: [userId], references: [id])
 }
 
+model Transaction {
+  id              Int       @id @default(autoincrement())
+  userId          Int
+  type            String              // "subscription" | "topup"
+  plan            String?             // BASIC/PRO/BUSINESS (subscription)
+  billingCycle    String?             // MONTHLY/YEARLY (subscription)
+  creditsChange   Int                 // ketika topup, atau 0 untuk subscription
+  amount          Int                 // nominal bayar
+  currency        String   @default("IDR")
+  orderId         String   @unique
+  status          String              // SUCCESS | PENDING | FAILED
+  paymentGateway  String              // MIDTRANS_SNAP
+  rawResponse     Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+}
