@@ -498,11 +498,11 @@ async function handleMidtransCallback(req, res) {
 // ------------------ EXPORTS ------------------
 
 module.exports = {
-  // dipakai di routes:
+  handleMidtransCallback,
+  handleCallback: handleMidtransCallback,
+
+  createTestTransaction,
   createSubscription,
   createTopup,
-  handleMidtransCallback,
-  // alias lama agar kompatibel:
-  handleCallback: handleMidtransCallback,
-  createTestTransaction,
 };
+
