@@ -8,11 +8,16 @@ const express = require('express');
 const router = express.Router();
 const midtransController = require('../controllers/midtrans.controller');
 
-// POST /api/v1/payments/midtrans/callback
-router.get('/ping', (req, res) => {
-  return res.json({ message: 'midtrans routes OK' });
-});
+// callback dari Midtrans
+router.post('/midtrans/callback', midtransController.handleCallback);
 
-router.post('/midtrans/callback', midtransController.handleMidtransCallback);
+// endpoint test (yang dipanggil dari BillingTestController Laravel)
+router.post('/midtrans/create-test-transaction', midtransController.createTestTransaction);
+
+// endpoint REAL subscription
+router.post('/midtrans/create-subscription', midtransController.createSubscription);
+
+// endpoint REAL topup
+router.post('/midtrans/create-topup', midtransController.createTopup);
 
 module.exports = router;
