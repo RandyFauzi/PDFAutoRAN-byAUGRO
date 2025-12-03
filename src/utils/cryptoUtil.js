@@ -1,39 +1,62 @@
 // src/utils/cryptoUtil.js
+// -----------------------------------------------
+// Utility enkripsi / dekripsi sederhana untuk API Key
+// Menggunakan AES-256-CTR dengan secret dari .env:
+//   API_KEY_ENCRYPT_SECRET
+// -----------------------------------------------
+
 const crypto = require('crypto');
 
-const ALGORITHM = 'aes-256-cbc';
-const IV_LENGTH = 16; // bytes
+const RAW_SECRET = process.env.API_KEY_ENCRYPT_SECRET || 'fallback-secret';
 
-function getKey() {
-  const secret = process.env.API_KEY_ENCRYPT_SECRET;
-  if (!secret) {
-    throw new Error('API_KEY_ENCRYPT_SECRET is not set');
+// Pastikan panjang key 32 byte (256 bit)
+const KEY = Buffer.from(
+  RAW_SECRET.length >= 32
+    ? RAW_SECRET.slice(0, 32)
+    : RAW_SECRET.padEnd(32, '0'),
+  'utf8'
+);
+
+const ALGO = 'aes-256-ctr';
+
+/**
+ * Enkripsi string -> string "ivHex:cipherHex"
+ */
+function encrypt(plainText) {
+  if (plainText == null) return null;
+
+  const iv = crypto.randomBytes(16); // 128-bit IV
+  const cipher = crypto.createCipheriv(ALGO, KEY, iv);
+
+  const encrypted = Buffer.concat([
+    cipher.update(String(plainText), 'utf8'),
+    cipher.final(),
+  ]);
+
+  return iv.toString('hex') + ':' + encrypted.toString('hex');
+}
+
+/**
+ * Dekripsi string "ivHex:cipherHex" -> plain text
+ */
+function decrypt(token) {
+  if (!token) return null;
+
+  const parts = String(token).split(':');
+  if (parts.length !== 2) {
+    throw new Error('Invalid encrypted token format');
   }
-  // pastikan 32 byte
-  return crypto.createHash('sha256').update(secret).digest();
-}
 
-function encrypt(text) {
-  const iv = crypto.randomBytes(IV_LENGTH);
-  const key = getKey();
-  const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
+  const iv = Buffer.from(parts[0], 'hex');
+  const encrypted = Buffer.from(parts[1], 'hex');
 
-  let encrypted = cipher.update(text, 'utf8', 'hex');
-  encrypted += cipher.final('hex');
+  const decipher = crypto.createDecipheriv(ALGO, KEY, iv);
+  const decrypted = Buffer.concat([
+    decipher.update(encrypted),
+    decipher.final(),
+  ]);
 
-  // gabung iv + ciphertext
-  return iv.toString('hex') + ':' + encrypted;
-}
-
-function decrypt(encrypted) {
-  const [ivHex, data] = encrypted.split(':');
-  const iv = Buffer.from(ivHex, 'hex');
-  const key = getKey();
-
-  const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
-  let decrypted = decipher.update(data, 'hex', 'utf8');
-  decrypted += decipher.final('utf8');
-  return decrypted;
+  return decrypted.toString('utf8');
 }
 
 module.exports = {
