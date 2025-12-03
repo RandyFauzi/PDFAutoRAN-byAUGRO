@@ -1,262 +1,213 @@
 // src/controllers/midtrans.controller.js
+// -----------------------------------------------------
+// Handle pembuatan transaksi Midtrans (Snap)
+// dan callback notifikasi dari Midtrans.
+// -----------------------------------------------------
 
-const { snap, coreApi } = require('../config/midtrans');
+const midtransClient = require('midtrans-client');
+const crypto = require('crypto');
+
+const env = require('../config/env');
 const { getPlanConfig } = require('../config/creditCost');
-const prisma = require('../config/prisma');
+const { PrismaClient } = require('@prisma/client');
+const prisma = new PrismaClient();
 const logger = require('../utils/logger');
 
-const VALID_PLANS = ['BASIC', 'PRO', 'BUSINESS'];
+// Inisialisasi Snap
+const snap = new midtransClient.Snap({
+  isProduction: process.env.MIDTRANS_IS_PRODUCTION === 'true',
+  serverKey: env.midtransServerKey,
+  clientKey: env.midtransClientKey,
+});
 
 /**
- * POST /api/midtrans/create-transaction
- *
- * Body contoh:
- * {
- *   "userId": 1,
- *   "plan": "PRO",
- *   "billingCycle": "monthly",   // atau "yearly"
- *   "customer": {
- *     "name": "Randy",
- *     "email": "ran@example.com"
- *   }
- * }
+ * POST /api/v1/payments/midtrans/create-subscription
+ * Body:
+ *  - userId: number
+ *  - plan: "BASIC" | "PRO" | "BUSINESS"
+ *  - billingCycle: "monthly" | "yearly"
+ *  - customer: { name, email }
  */
-async function createTransaction(req, res, next) {
+exports.createSubscription = async (req, res) => {
   try {
     const { userId, plan, billingCycle, customer } = req.body;
 
-    // 1. Validasi dasar
+    // 1. Validasi basic
     if (!userId || !plan || !billingCycle) {
       return res.status(400).json({
-        success: false,
         message: 'userId, plan, dan billingCycle wajib diisi',
       });
     }
 
-    const planUpper = String(plan).toUpperCase();
-    if (!VALID_PLANS.includes(planUpper)) {
+    const normalizedPlan = String(plan).toUpperCase();
+    const normalizedCycle = String(billingCycle).toLowerCase();
+
+    if (!['BASIC', 'PRO', 'BUSINESS'].includes(normalizedPlan)) {
+      return res.status(400).json({ message: 'Plan tidak valid' });
+    }
+    if (!['monthly', 'yearly'].includes(normalizedCycle)) {
+      return res.status(400).json({ message: 'billingCycle tidak valid' });
+    }
+
+    if (!customer || !customer.email) {
       return res.status(400).json({
-        success: false,
-        message: 'Plan tidak valid (hanya BASIC, PRO, BUSINESS)',
+        message: 'customer.name dan customer.email wajib diisi',
       });
     }
 
-    const billingLower = String(billingCycle).toLowerCase(); // "monthly"|"yearly"
-
-    // 2. Ambil config plan dari creditCost.js
-    const planConfig = getPlanConfig(planUpper, billingLower);
+    // 2. Ambil konfigurasi plan dari creditCost.js
+    const planConfig = getPlanConfig(normalizedPlan, normalizedCycle);
     if (!planConfig) {
       return res.status(400).json({
-        success: false,
-        message: 'Konfigurasi plan/billingCycle tidak ditemukan di creditCost.js',
+        message: 'Konfigurasi plan tidak ditemukan di creditCost.js',
       });
     }
 
-    const grossAmount = planConfig.priceIDR;           // nominal bayar
-    const creditsChange = planConfig.creditsPerPeriod; // jumlah credits per periode
+    const grossAmount = planConfig.priceIDR;           // harga rupiah
+    const creditsPerPeriod = planConfig.creditsPerPeriod;
 
-    if (!grossAmount || !creditsChange) {
-      return res.status(500).json({
-        success: false,
-        message: 'priceIDR atau creditsPerPeriod belum diset untuk plan ini',
-      });
-    }
+    // 3. Generate order_id unik
+    const orderId = `SUB-${normalizedPlan}-${normalizedCycle.toUpperCase()}-${userId}-${Date.now()}`;
 
-    // 3. Ambil user
-    const user = await prisma.user.findUnique({
-      where: { id: Number(userId) },
-    });
-
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: 'User tidak ditemukan',
-      });
-    }
-
-    // 4. Generate order_id unik
-    const orderId = `PDFAUTORAN-${userId}-${Date.now()}`;
-
-    // 5. Siapkan payload ke Midtrans
-    const customerName = customer?.name || user.email.split('@')[0];
-    const customerEmail = customer?.email || user.email;
-
+    // 4. Parameter Midtrans Snap
     const parameter = {
       transaction_details: {
         order_id: orderId,
         gross_amount: grossAmount,
       },
-      customer_details: {
-        first_name: customerName,
-        email: customerEmail,
-      },
       item_details: [
         {
-          id: planUpper,
+          id: `${normalizedPlan}_${normalizedCycle}`,
           price: grossAmount,
           quantity: 1,
-          name: `Subscription ${planUpper} (${billingLower})`,
+          name: `${normalizedPlan} plan (${normalizedCycle})`,
         },
       ],
+      customer_details: {
+        first_name: customer.name || customer.email,
+        email: customer.email,
+      },
     };
 
-    // 6. Panggil Midtrans Snap
-    const transaction = await snap.createTransaction(parameter);
-
-    const snapToken = transaction.token;
-    const redirectUrl = transaction.redirect_url;
-
-    // 7. Simpan Transaction di DB (status awal: PENDING)
+    // 5. Simpan transaction di DB sebagai PENDING
     await prisma.transaction.create({
       data: {
         userId: Number(userId),
         type: 'subscription',
-        plan: planUpper,                          // "BASIC"|"PRO"|"BUSINESS"
-        billingCycle: billingLower.toUpperCase(), // "MONTHLY"|"YEARLY"
-        creditsChange,
+        plan: normalizedPlan,
+        billingCycle: normalizedCycle.toUpperCase(), // sesuai schema: String
+        creditsChange: creditsPerPeriod,
         amount: grossAmount,
         currency: 'IDR',
         orderId,
         status: 'PENDING',
         paymentGateway: 'MIDTRANS_SNAP',
-        rawResponse: transaction,
       },
     });
 
-    logger.info?.(
-      `[MIDTRANS] Created transaction ${orderId} for user ${userId} plan ${planUpper} (${billingLower})`
-    );
+    // 6. Minta Snap Token ke Midtrans
+    const transaction = await snap.createTransaction(parameter);
+    const snapToken = transaction.token;
 
     return res.json({
-      success: true,
-      orderId,
       snapToken,
-      redirectUrl,
-      amount: grossAmount,
-      credits: creditsChange,
+      orderId,
     });
   } catch (err) {
-    logger.error?.('[MIDTRANS] createTransaction error', err);
-    return next(err);
-  }
-}
-
-/**
- * POST /api/midtrans/notification
- * Endpoint untuk menerima webhook dari Midtrans
- */
-async function handleNotification(req, res, next) {
-  try {
-    const notificationJson = req.body;
-
-    const statusResponse = await coreApi.transaction.notification(notificationJson);
-
-    const orderId = statusResponse.order_id;
-    const transactionStatus = statusResponse.transaction_status;
-    const fraudStatus = statusResponse.fraud_status;
-
-    logger.info?.(`[MIDTRANS] Notification: ${orderId} - ${transactionStatus} - ${fraudStatus}`);
-
-    const existingTx = await prisma.transaction.findUnique({
-      where: { orderId },
+    logger.error('Error createSubscription Midtrans', {
+      error: err.message,
+      stack: err.stack,
+      body: req.body,
     });
 
-    if (!existingTx) {
-      logger.warn?.(`[MIDTRANS] Transaction not found: ${orderId}`);
-      return res.status(200).send('OK');
+    return res.status(500).json({
+      message: 'Gagal membuat transaksi Midtrans',
+      error: err.message,
+    });
+  }
+};
+
+/**
+ * POST /api/v1/payments/midtrans/callback
+ * Endpoint untuk menerima notifikasi status pembayaran dari Midtrans.
+ * URL ini harus diisi di dashboard Midtrans (Notification URL).
+ */
+exports.handleCallback = async (req, res) => {
+  try {
+    const notif = req.body;
+
+    const {
+      order_id,
+      transaction_status,
+      status_code,
+      gross_amount,
+      signature_key,
+      fraud_status,
+    } = notif;
+
+    // 1. Verifikasi signature (security best practice)
+    const serverKey = env.midtransServerKey;
+    const expectedSignature = crypto
+      .createHash('sha512')
+      .update(order_id + status_code + gross_amount + serverKey)
+      .digest('hex');
+
+    if (expectedSignature !== signature_key) {
+      logger.warn('Midtrans callback signature tidak valid', { order_id });
+      return res.status(403).json({ message: 'Invalid signature' });
     }
 
-    let newStatus = existingTx.status;
+    // 2. Mapping status
+    let newStatus = 'PENDING';
 
-    // Mapping status Midtrans -> status internal
-    if (transactionStatus === 'capture') {
-      if (fraudStatus === 'challenge') {
-        newStatus = 'PENDING';
-      } else if (fraudStatus === 'accept') {
+    if (transaction_status === 'capture') {
+      if (fraud_status === 'accept') {
         newStatus = 'SUCCESS';
+      } else if (fraud_status === 'challenge') {
+        newStatus = 'CHALLENGE';
+      } else {
+        newStatus = 'FAILED';
       }
-    } else if (transactionStatus === 'settlement') {
+    } else if (transaction_status === 'settlement') {
       newStatus = 'SUCCESS';
-    } else if (transactionStatus === 'pending') {
+    } else if (transaction_status === 'pending') {
       newStatus = 'PENDING';
     } else if (
-      transactionStatus === 'deny' ||
-      transactionStatus === 'cancel' ||
-      transactionStatus === 'expire'
+      transaction_status === 'deny' ||
+      transaction_status === 'cancel' ||
+      transaction_status === 'expire'
     ) {
       newStatus = 'FAILED';
+    } else {
+      newStatus = transaction_status.toUpperCase();
     }
 
-    // 1) Update Transaction
+    // 3. Update transaksi di DB
     const updatedTx = await prisma.transaction.update({
-      where: { orderId },
+      where: { orderId: order_id },
       data: {
         status: newStatus,
-        rawResponse: statusResponse,
+        rawResponse: notif,
       },
     });
 
-    // 2) Jika SUCCESS → update User & Subscription
-    if (newStatus === 'SUCCESS') {
-      const userId = updatedTx.userId;
-      const plan = updatedTx.plan;                        // "BASIC"|"PRO"|"BUSINESS"
-      const billingCycle = (updatedTx.billingCycle || 'MONTHLY').toUpperCase();
-      const creditsChange = updatedTx.creditsChange;
+    logger.info('Midtrans callback processed', {
+      orderId: order_id,
+      status: newStatus,
+    });
 
-      // 2a. Tambah credits & update plan user
-      await prisma.user.update({
-        where: { id: userId },
-        data: {
-          credits: { increment: creditsChange },
-          plan: plan, // simpan string "BASIC"/"PRO"/"BUSINESS"
-        },
-      });
+    // TODO (next step): jika newStatus === 'SUCCESS'
+    //  - Update Subscription user
+    //  - Set plan & credits di tabel User
+    //  - Atur currentPeriodStart & currentPeriodEnd di Subscription
 
-      // 2b. Hitung periode subscription
-      const now = new Date();
-      const end = new Date(now);
-
-      if (billingCycle === 'YEARLY') {
-        end.setFullYear(end.getFullYear() + 1);
-      } else {
-        // default MONTHLY
-        end.setMonth(end.getMonth() + 1);
-      }
-
-      // 2c. Upsert Subscription
-      await prisma.subscription.upsert({
-        where: { userId },
-        update: {
-          plan,                  // enum Plan di Prisma
-          billingCycle,          // enum BillingCycle (string "MONTHLY"/"YEARLY")
-          status: 'ACTIVE',
-          currentPeriodStart: now,
-          currentPeriodEnd: end,
-        },
-        create: {
-          userId,
-          plan,
-          billingCycle,
-          status: 'ACTIVE',
-          currentPeriodStart: now,
-          currentPeriodEnd: end,
-        },
-      });
-
-      logger.info?.(
-        `[MIDTRANS] Payment success -> user ${userId} plan ${plan} (${billingCycle}), credits +${creditsChange}`
-      );
-    }
-
-    return res.status(200).send('OK');
+    return res.status(200).json({ message: 'OK' });
   } catch (err) {
-    logger.error?.('[MIDTRANS] handleNotification error', err);
-    // Tetap balas 200 supaya Midtrans tidak spam
-    return res.status(200).send('OK');
+    logger.error('Error handleCallback Midtrans', {
+      error: err.message,
+      body: req.body,
+    });
+    // Midtrans butuh 200 supaya tidak spam, tapi boleh tetap 500
+    return res.status(500).json({ message: 'Internal server error' });
   }
-}
-
-module.exports = {
-  createTransaction,
-  handleNotification,
 };

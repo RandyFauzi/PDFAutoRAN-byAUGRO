@@ -1,33 +1,20 @@
 // src/routes/midtrans.routes.js
-
 const express = require('express');
 const router = express.Router();
 
 const midtransController = require('../controllers/midtrans.controller');
-// Kalau nanti mau pakai auth, bisa aktifkan ini:
-// const authMiddleware = require('../middleware/authMiddleware');
 
-// -------------------------------------------
-// Route untuk membuat transaksi + Snap Token
-// Dipanggil dari FRONTEND (Laravel / dashboard)
-// -------------------------------------------
+// =====================================
+// Dipanggil dari Laravel:
+// POST /api/v1/payments/midtrans/create-subscription
+// =====================================
+router.post('/create-subscription', midtransController.createSubscription);
 
-// Tanpa auth (untuk awal development/testing)
-router.post(
-  '/create-transaction',
-  // authMiddleware, // <- aktifkan kalau mau proteksi
-  midtransController.createTransaction
-);
-
-// -------------------------------------------
-// Route untuk menerima NOTIFICATION / WEBHOOK
-// dari Midtrans. TIDAK boleh pakai auth,
-// harus bisa diakses langsung oleh Midtrans.
-// -------------------------------------------
-
-router.post(
-  '/notification',
-  midtransController.handleNotification
-);
+// =====================================
+// Webhook / Notification dari Midtrans:
+// POST /api/v1/payments/midtrans/callback
+// (endpoint ini yang kamu set di dashboard Midtrans)
+// =====================================
+router.post('/callback', midtransController.handleCallback);
 
 module.exports = router;
