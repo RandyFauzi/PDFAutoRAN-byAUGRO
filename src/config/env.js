@@ -13,7 +13,14 @@ const env = {
   // Support Admin Emails: "admin1@gmail.com,admin2@gmail.com"
   adminEmails: process.env.ADMIN_EMAILS
     ? process.env.ADMIN_EMAILS.split(',').map(e => e.trim())
-    : []
+    : [],
+
+  // ========================
+  // MIDTRANS CONFIG
+  // ========================
+  midtransServerKey: process.env.MIDTRANS_SERVER_KEY || '',
+  midtransClientKey: process.env.MIDTRANS_CLIENT_KEY || '',
+  midtransMerchantId: process.env.MIDTRANS_MERCHANT_ID || '',
 };
 
 module.exports = env;
