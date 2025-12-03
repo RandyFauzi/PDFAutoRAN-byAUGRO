@@ -117,14 +117,15 @@ async function createSubscription(req, res) {
     const planUpper = String(plan).toUpperCase();           // BASIC / PERSONAL / BUSINESS
     const billingLower = String(billingCycle).toLowerCase(); // monthly / yearly
 
-    const cfg = getPlanConfig(planUpper, billingLower);
-    if (!cfg || !cfg.price || !cfg.creditsPerPeriod) {
+    const price = cfg && (cfg.priceIDR || cfg.price);
+
+    if (!cfg || !price || !cfg.creditsPerPeriod) {
       return res.status(400).json({
         message: 'Plan / billingCycle tidak dikenali di config',
       });
     }
 
-    const grossAmount = cfg.price;
+    const grossAmount = price;
     const orderId = `subs-${userId}-${planUpper}-${billingLower}-${Date.now()}`;
 
     const serverKey = env.midtransServerKey || process.env.MIDTRANS_SERVER_KEY;
@@ -207,14 +208,16 @@ async function createTopup(req, res) {
       });
     }
 
-    const cfg = getTopupConfig(topupCode);
-    if (!cfg || !cfg.price || !cfg.credits) {
+    const cfg = getTopupConfig(topupCode);  
+    const price = cfg && (cfg.priceIDR || cfg.price);
+
+    if (!cfg || !price || !cfg.credits) {
       return res.status(400).json({
         message: 'topupCode tidak dikenali di config',
       });
     }
 
-    const grossAmount = cfg.price;
+    const grossAmount = price;
     const creditsAmount = cfg.credits;
     const orderId = `topup-${userId}-${creditsAmount}-${Date.now()}`;
 
