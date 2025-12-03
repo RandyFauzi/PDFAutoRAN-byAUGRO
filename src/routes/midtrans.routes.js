@@ -18,6 +18,6 @@ router.post(
 );
 
 // POST /api/v1/payments/midtrans/webhook
-rrouter.post('/webhook', midtransController.handleMidtransCallback);
+router.post('/webhook', midtransController.handleMidtransCallback);
 
 module.exports = router;
