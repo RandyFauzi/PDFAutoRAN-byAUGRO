@@ -64,7 +64,7 @@ app.use('/api/v1/pdf', pdfRoutes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/api-keys', apiKeyRoutes);
 app.use('/api/v1/usage', usageRoutes);
-app.use('/api/v1/payments', midtransRoutes);
+app.use('/api/v1/payments/midtrans', midtransRoutes);
 
 // ---------- Error handlers ----------
 app.use(notFound);

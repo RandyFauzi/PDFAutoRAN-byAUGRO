@@ -1,23 +1,26 @@
 // src/routes/midtrans.routes.js
-// ------------------------------------------------------
-// Routing untuk pembayaran Midtrans (callback).
-// Prefix dari server: /api/v1/payments
-// ------------------------------------------------------
-
 const express = require('express');
 const router = express.Router();
+
+// Import controller sebagai object, TIDAK di-destructure
 const midtransController = require('../controllers/midtrans.controller');
 
-// callback dari Midtrans
-router.post('/midtrans/callback', midtransController.handleCallback);
+// POST /api/v1/payments/midtrans/create-subscription
+router.post(
+  '/create-subscription',
+  midtransController.createSubscription
+);
 
-// endpoint test (yang dipanggil dari BillingTestController Laravel)
-router.post('/midtrans/create-test-transaction', midtransController.createTestTransaction);
+// POST /api/v1/payments/midtrans/create-topup
+router.post(
+  '/create-topup',
+  midtransController.createTopup
+);
 
-// endpoint REAL subscription
-router.post('/midtrans/create-subscription', midtransController.createSubscription);
-
-// endpoint REAL topup
-router.post('/midtrans/create-topup', midtransController.createTopup);
+// POST /api/v1/payments/midtrans/webhook
+router.post(
+  '/webhook',
+  midtransController.handleNotification
+);
 
 module.exports = router;

@@ -1,14 +1,26 @@
 // src/controllers/midtrans.controller.js
 // ------------------------------------------------------
-// Midtrans SNAP callback handler
-// Endpoint: POST /api/v1/payments/midtrans/callback
+// Midtrans SNAP callback + charge handler
+// Endpoint utama:
+//  - POST /api/v1/payments/midtrans/create-subscription
+//  - POST /api/v1/payments/midtrans/create-topup
+//  - POST /api/v1/payments/midtrans/callback
 // ------------------------------------------------------
 
 const crypto = require('crypto');
 const prisma = require('../config/prisma');
 const env = require('../config/env');
-const { getPlanConfig } = require('../config/creditCost');
-const logger = require('../utils/logger'); // kalau belum ada, pakai console.log saja
+const { getPlanConfig, getTopupConfig } = require('../config/creditCost');
+
+// Logger: kalau ../utils/logger tidak ada, fallback ke console
+let logger = console;
+try {
+  // optional custom logger
+  // eslint-disable-next-line global-require
+  logger = require('../utils/logger');
+} catch (e) {
+  logger = console;
+}
 
 // ------------------ Helper ------------------
 
@@ -39,7 +51,7 @@ function getNextPeriodRangeFromNow(billingCycleEnum) {
   return { periodStart, periodEnd };
 }
 
-// ------------------ 1) TEST TRANSACTION ------------------
+// ------------------ 0) TEST TRANSACTION (opsional) ------------------
 
 async function createTestTransaction(req, res, next) {
   try {
@@ -47,14 +59,14 @@ async function createTestTransaction(req, res, next) {
 
     const orderId = `test-${userId}-${Date.now()}`;
 
+    const serverKey = env.midtransServerKey || process.env.MIDTRANS_SERVER_KEY;
     const response = await fetch('https://api.sandbox.midtrans.com/v2/charge', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Accept: 'application/json',
         Authorization:
-          'Basic ' +
-          Buffer.from((env.midtransServerKey || process.env.MIDTRANS_SERVER_KEY) + ':').toString('base64'),
+          'Basic ' + Buffer.from(serverKey + ':').toString('base64'),
       },
       body: JSON.stringify({
         payment_type: 'qris',
@@ -85,7 +97,7 @@ async function createTestTransaction(req, res, next) {
     });
   } catch (err) {
     logger.error('[Midtrans][createTestTransaction] Exception:', err);
-    next(err);
+    return next(err);
   }
 }
 
@@ -102,10 +114,9 @@ async function createSubscription(req, res) {
       });
     }
 
-    const planUpper = String(plan).toUpperCase();      // BASIC / PRO / BUSINESS
+    const planUpper = String(plan).toUpperCase();           // BASIC / PERSONAL / BUSINESS
     const billingLower = String(billingCycle).toLowerCase(); // monthly / yearly
 
-    // Ambil config plan dari creditCost.js
     const cfg = getPlanConfig(planUpper, billingLower);
     if (!cfg || !cfg.price || !cfg.creditsPerPeriod) {
       return res.status(400).json({
@@ -113,112 +124,12 @@ async function createSubscription(req, res) {
       });
     }
 
-    const grossAmount = cfg.price; // harga dalam rupiah
-
-    // Pola order_id: subs-{userId}-{PLAN}-{monthly|yearly}-{timestamp}
+    const grossAmount = cfg.price;
     const orderId = `subs-${userId}-${planUpper}-${billingLower}-${Date.now()}`;
 
     const serverKey = env.midtransServerKey || process.env.MIDTRANS_SERVER_KEY;
     if (!serverKey) {
-      console.error('[createSubscription] MIDTRANS_SERVER_KEY belum di-set');
-      return res.status(500).json({ message: 'Midtrans server key not configured' });
-    }
-
-    // Panggil Midtrans Snap API
-    const response = await fetch('https://api.sandbox.midtrans.com/v2/charge', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-        Authorization:
-          'Basic ' + Buffer.from(serverKey + ':').toString('base64'),
-      },
-      body: JSON.stringify({
-        payment_type: 'qris', // sementara kita pakai QRIS
-        transaction_details: {
-          order_id: orderId,
-          gross_amount: grossAmount,
-        },
-        customer_details: {
-          first_name: customer?.name || 'User',
-          email: customer?.email || 'no-reply@example.com',
-        },
-      }),
-    });
-
-    const body = await response.json();
-
-    if (!response.ok) {
-      console.error('[createSubscription] Midtrans error:', body);
-      return res.status(response.status).json(body);
-    }
-
-    // Catat transaksi awal (status PENDING) di DB
-    try {
-      await prisma.transaction.create({
-        data: {
-          userId: Number(userId),
-          type: 'subscription',
-          plan: planUpper,
-          billingCycle: billingLower === 'yearly' ? 'YEARLY' : 'MONTHLY',
-          creditsChange: 0, // credits baru akan di-set saat callback SUCCESS
-          amount: grossAmount,
-          currency: 'IDR',
-          orderId,
-          status: 'PENDING',
-          paymentGateway: 'MIDTRANS_SNAP',
-          rawResponse: body,
-        },
-      });
-    } catch (err) {
-      console.error('[createSubscription] Gagal insert Transaction PENDING:', err);
-      // kita tetap kirim response ke frontend supaya user bisa bayar
-    }
-
-    // Kembalikan data penting ke Laravel
-    return res.json({
-      order_id: orderId,
-      token: body.token,
-      redirect_url: body.redirect_url,
-    });
-  } catch (err) {
-    console.error('[createSubscription] Unexpected error:', err);
-    return res.status(500).json({ message: 'Internal error' });
-  }
-}
-
-// ==============================
-// 2) CREATE TOPUP CHARGE
-// ==============================
-async function createTopup(req, res) {
-  try {
-    const { userId, topupCode, customer } = req.body || {};
-
-    if (!userId || !topupCode) {
-      return res.status(400).json({
-        message: 'userId dan topupCode wajib diisi',
-      });
-    }
-
-    // Kalau di creditCost.js sudah ada getTopupConfig, pakai ini
-    const { getTopupConfig } = require('../config/creditCost');
-    const cfg = getTopupConfig(topupCode);
-
-    if (!cfg || !cfg.price || !cfg.credits) {
-      return res.status(400).json({
-        message: 'topupCode tidak dikenali di config',
-      });
-    }
-
-    const grossAmount = cfg.price;
-    const creditsAmount = cfg.credits;
-
-    // Pola order_id: topup-{userId}-{credits}-{timestamp}
-    const orderId = `topup-${userId}-${creditsAmount}-${Date.now()}`;
-
-    const serverKey = env.midtransServerKey || process.env.MIDTRANS_SERVER_KEY;
-    if (!serverKey) {
-      console.error('[createTopup] MIDTRANS_SERVER_KEY belum di-set');
+      logger.error('[createSubscription] MIDTRANS_SERVER_KEY belum di-set');
       return res.status(500).json({ message: 'Midtrans server key not configured' });
     }
 
@@ -246,7 +157,98 @@ async function createTopup(req, res) {
     const body = await response.json();
 
     if (!response.ok) {
-      console.error('[createTopup] Midtrans error:', body);
+      logger.error('[createSubscription] Midtrans error:', body);
+      return res.status(response.status).json(body);
+    }
+
+    // Catat transaksi awal (PENDING)
+    try {
+      await prisma.transaction.create({
+        data: {
+          userId: Number(userId),
+          type: 'subscription',
+          plan: planUpper,
+          billingCycle: billingLower === 'yearly' ? 'YEARLY' : 'MONTHLY',
+          creditsChange: 0,
+          amount: grossAmount,
+          currency: 'IDR',
+          orderId,
+          status: 'PENDING',
+          paymentGateway: 'MIDTRANS_SNAP',
+          rawResponse: body,
+        },
+      });
+    } catch (err) {
+      logger.error('[createSubscription] Gagal insert Transaction PENDING:', err);
+      // tetap lanjut; user tetap bisa bayar
+    }
+
+    return res.json({
+      order_id: orderId,
+      token: body.token,
+      redirect_url: body.redirect_url,
+    });
+  } catch (err) {
+    logger.error('[createSubscription] Unexpected error:', err);
+    return res.status(500).json({ message: 'Internal error' });
+  }
+}
+
+// ==============================
+// 2) CREATE TOPUP CHARGE
+// ==============================
+async function createTopup(req, res) {
+  try {
+    const { userId, topupCode, customer } = req.body || {};
+
+    if (!userId || !topupCode) {
+      return res.status(400).json({
+        message: 'userId dan topupCode wajib diisi',
+      });
+    }
+
+    const cfg = getTopupConfig(topupCode);
+    if (!cfg || !cfg.price || !cfg.credits) {
+      return res.status(400).json({
+        message: 'topupCode tidak dikenali di config',
+      });
+    }
+
+    const grossAmount = cfg.price;
+    const creditsAmount = cfg.credits;
+    const orderId = `topup-${userId}-${creditsAmount}-${Date.now()}`;
+
+    const serverKey = env.midtransServerKey || process.env.MIDTRANS_SERVER_KEY;
+    if (!serverKey) {
+      logger.error('[createTopup] MIDTRANS_SERVER_KEY belum di-set');
+      return res.status(500).json({ message: 'Midtrans server key not configured' });
+    }
+
+    const response = await fetch('https://api.sandbox.midtrans.com/v2/charge', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        Authorization:
+          'Basic ' + Buffer.from(serverKey + ':').toString('base64'),
+      },
+      body: JSON.stringify({
+        payment_type: 'qris',
+        transaction_details: {
+          order_id: orderId,
+          gross_amount: grossAmount,
+        },
+        customer_details: {
+          first_name: customer?.name || 'User',
+          email: customer?.email || 'no-reply@example.com',
+        },
+      }),
+    });
+
+    const body = await response.json();
+
+    if (!response.ok) {
+      logger.error('[createTopup] Midtrans error:', body);
       return res.status(response.status).json(body);
     }
 
@@ -258,7 +260,7 @@ async function createTopup(req, res) {
           type: 'topup',
           plan: null,
           billingCycle: null,
-          creditsChange: creditsAmount, // akan dipakai saat SUCCESS
+          creditsChange: creditsAmount,
           amount: grossAmount,
           currency: 'IDR',
           orderId,
@@ -268,7 +270,7 @@ async function createTopup(req, res) {
         },
       });
     } catch (err) {
-      console.error('[createTopup] Gagal insert Transaction PENDING:', err);
+      logger.error('[createTopup] Gagal insert Transaction PENDING:', err);
     }
 
     return res.json({
@@ -277,14 +279,12 @@ async function createTopup(req, res) {
       redirect_url: body.redirect_url,
     });
   } catch (err) {
-    console.error('[createTopup] Unexpected error:', err);
+    logger.error('[createTopup] Unexpected error:', err);
     return res.status(500).json({ message: 'Internal error' });
   }
 }
 
-
-
-// ------------------ 2) CALLBACK HANDLER ------------------
+// ------------------ 3) CALLBACK HANDLER ------------------
 
 async function handleMidtransCallback(req, res) {
   try {
@@ -307,12 +307,9 @@ async function handleMidtransCallback(req, res) {
       });
     }
 
-    // 1. Validasi signature
-    const serverKey =
-      env.midtransServerKey || process.env.MIDTRANS_SERVER_KEY;
-
+    const serverKey = env.midtransServerKey || process.env.MIDTRANS_SERVER_KEY;
     if (!serverKey) {
-      console.error('[MidtransCallback] MIDTRANS_SERVER_KEY not set');
+      logger.error('[MidtransCallback] MIDTRANS_SERVER_KEY not set');
       return res.status(500).json({
         message: 'Midtrans server key not configured',
       });
@@ -324,26 +321,23 @@ async function handleMidtransCallback(req, res) {
       .digest('hex');
 
     if (expectedSignature !== signatureKey) {
-      console.warn('[MidtransCallback] Invalid signature for order', orderId);
+      logger.warn('[MidtransCallback] Invalid signature for order', orderId);
       return res.status(400).json({ message: 'Invalid signature' });
     }
 
     const txStatus = mapMidtransStatus(transactionStatus);
 
-    // 2. Parse order_id
-    // subs-{userId}-{PLAN}-{monthly|yearly}-{timestamp}
-    // topup-{userId}-{creditAmount}-{timestamp}
     const parts = String(orderId).split('-');
     const prefix = parts[0]; // subs | topup | test
 
     if (prefix !== 'subs' && prefix !== 'topup' && prefix !== 'test') {
-      console.warn('[MidtransCallback] Unknown order prefix:', prefix);
+      logger.warn('[MidtransCallback] Unknown order prefix:', prefix);
       return res.status(200).json({ message: 'Ignored unknown order type' });
     }
 
     const userId = Number(parts[1]);
     if (!userId || Number.isNaN(userId)) {
-      console.error('[MidtransCallback] Invalid userId in orderId:', orderId);
+      logger.error('[MidtransCallback] Invalid userId in orderId:', orderId);
       return res.status(400).json({ message: 'Invalid user id in order id' });
     }
 
@@ -355,23 +349,19 @@ async function handleMidtransCallback(req, res) {
     let creditsChange = 0;
 
     if (prefix === 'subs') {
-      // subs-12-BASIC-monthly-1733206150
-      const rawPlan = parts[2]; // BASIC / PRO / BUSINESS
-      const rawBillingCycle = parts[3]; // monthly / yearly
+      const rawPlan = parts[2];
+      const rawBillingCycle = parts[3];
 
       plan = String(rawPlan || '').toUpperCase();
       const billingLower = String(rawBillingCycle || '').toLowerCase();
-      const billingEnum =
-        billingLower === 'yearly'
-          ? 'YEARLY'
-          : 'MONTHLY';
+      const billingEnum = billingLower === 'yearly' ? 'YEARLY' : 'MONTHLY';
 
       billingCycle = billingEnum;
       type = 'subscription';
 
       const cfg = getPlanConfig(plan, billingLower);
       if (!cfg || !cfg.creditsPerPeriod) {
-        console.error(
+        logger.error(
           '[MidtransCallback] No plan config for plan/billing:',
           plan,
           billingLower,
@@ -380,7 +370,6 @@ async function handleMidtransCallback(req, res) {
         creditsChange = cfg.creditsPerPeriod;
       }
     } else if (prefix === 'topup') {
-      // topup-12-5000-1733206150
       const creditAmountRaw = parts[2];
       const creditAmount = parseInt(creditAmountRaw, 10) || 0;
 
@@ -390,10 +379,9 @@ async function handleMidtransCallback(req, res) {
       type = 'test';
     }
 
-    // 3. Upsert Transaction
-    let transaction;
+    // Upsert Transaction
     try {
-      transaction = await prisma.transaction.upsert({
+      await prisma.transaction.upsert({
         where: { orderId },
         update: {
           status: txStatus,
@@ -415,11 +403,11 @@ async function handleMidtransCallback(req, res) {
         },
       });
     } catch (err) {
-      console.error('[MidtransCallback] upsert Transaction error:', err);
+      logger.error('[MidtransCallback] upsert Transaction error:', err);
       return res.status(200).json({ message: 'ERROR_LOGGED' });
     }
 
-    // 4. Kalau payment SUCCESS → update Subscription / Credits
+    // Kalau SUCCESS → update subscription / credits
     if (txStatus === 'SUCCESS') {
       if (type === 'subscription' && plan && billingCycle) {
         const billingLower =
@@ -462,11 +450,11 @@ async function handleMidtransCallback(req, res) {
               });
             });
 
-            console.log(
+            logger.info(
               `[MidtransCallback] Activated subscription for userId=${userId}, plan=${plan}, billing=${billingCycle}`,
             );
           } catch (err) {
-            console.error(
+            logger.error(
               '[MidtransCallback] Error updating subscription/user:',
               err,
             );
@@ -484,11 +472,11 @@ async function handleMidtransCallback(req, res) {
             },
           });
 
-          console.log(
+          logger.info(
             `[MidtransCallback] Topup credits userId=${userId} +${creditsChange}`,
           );
         } catch (err) {
-          console.error('[MidtransCallback] Error topup credits:', err);
+          logger.error('[MidtransCallback] Error topup credits:', err);
         }
       }
     }
@@ -502,15 +490,19 @@ async function handleMidtransCallback(req, res) {
 
     return res.status(200).json({ message: 'OK' });
   } catch (err) {
-    console.error('[MidtransCallback] Unexpected error:', err);
+    logger.error('[MidtransCallback] Unexpected error:', err);
     return res.status(200).json({ message: 'ERROR_LOGGED' });
   }
 }
 
-module.exports = {
-  // supaya kompatibel dengan routes lama:
-  handleMidtransCallback,
-  handleCallback: handleMidtransCallback,
+// ------------------ EXPORTS ------------------
 
+module.exports = {
+  // dipakai di routes:
+  createSubscription,
+  createTopup,
+  handleMidtransCallback,
+  // alias lama agar kompatibel:
+  handleCallback: handleMidtransCallback,
   createTestTransaction,
 };
