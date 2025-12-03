@@ -18,9 +18,9 @@ const env = {
   // ========================
   // MIDTRANS CONFIG
   // ========================
-  midtransServerKey: process.env.MIDTRANS_SERVER_KEY || '',
-  midtransClientKey: process.env.MIDTRANS_CLIENT_KEY || '',
-  midtransMerchantId: process.env.MIDTRANS_MERCHANT_ID || '',
+  midtransServerKey: process.env.MIDTRANS_SERVER_KEY,
+  midtransClientKey: process.env.MIDTRANS_CLIENT_KEY,
+  midtransMerchantId: process.env.MIDTRANS_MERCHANT_ID,
 };
 
 module.exports = env;

@@ -1,235 +1,264 @@
 // src/controllers/midtrans.controller.js
 // ------------------------------------------------------
-// Handle callback / notification dari Midtrans Snap.
-// Endpoint (di-route): POST /api/v1/payments/midtrans/callback
+// Midtrans SNAP callback handler
+// Endpoint: POST /api/v1/payments/midtrans/callback
 // ------------------------------------------------------
 
 const crypto = require('crypto');
 const prisma = require('../config/prisma');
 const env = require('../config/env');
-const { applyPaidPlan } = require('../services/subscription.service');
-const userService = require('../services/user.service');
 const { getPlanConfig } = require('../config/creditCost');
 
-// 👉 Tambahkan test code ini persis setelah require env
-console.log('[MIDTRANS CONFIG CHECK]', {
-  serverKey: env.midtransServerKey ? 'OK' : 'MISSING',
-  clientKey: env.midtransClientKey ? 'OK' : 'MISSING',
-  merchantId: env.midtransMerchantId ? 'OK' : 'MISSING',
-});
+// Map status Midtrans -> status internal Transaction
+function mapMidtransStatus(transactionStatus) {
+  const s = String(transactionStatus || '').toLowerCase();
 
-/**
- * Hitung signature sesuai dokumentasi Midtrans:
- * sha512(order_id + status_code + gross_amount + serverKey)
- */
-function computeSignature(orderId, statusCode, grossAmount) {
-  if (!env.midtransServerKey) {
-    throw new Error('MIDTRANS server key (env.midtransServerKey) belum diset');
-  }
+  if (s === 'capture' || s === 'settlement') return 'SUCCESS';
+  if (s === 'pending') return 'PENDING';
 
-  const base = String(orderId) + String(statusCode) + String(grossAmount) + env.midtransServerKey;
-
-  return crypto.createHash('sha512').update(base).digest('hex');
-}
-
-/**
- * Parse order_id berdasarkan kontrak:
- *
- * Subscription:
- *   subs-{userId}-{planId}-{billingCycle}-{timestamp}
- *   contoh: subs-12-BASIC-monthly-1733206150
- *
- * Topup:
- *   topup-{userId}-{creditAmount}-{timestamp}
- */
-function parseOrderId(orderId) {
-  if (!orderId || typeof orderId !== 'string') return null;
-
-  const parts = orderId.split('-');
-  if (parts.length < 4) return null;
-
-  const [prefix] = parts;
-
-  if (prefix === 'subs') {
-    // subs-{userId}-{planId}-{billingCycle}-{timestamp}
-    const [, userIdStr, planIdRaw, billingCycleRaw] = parts;
-
-    const userId = parseInt(userIdStr, 10);
-    if (!Number.isFinite(userId)) return null;
-
-    const planId = String(planIdRaw || '').toUpperCase(); // BASIC/PRO/BUSINESS
-    const rawCycle = String(billingCycleRaw || '');
-
-    // Konversi ke enum BillingCycle untuk Prisma (MONTHLY/YEARLY)
-    const lowerCycle = rawCycle.toLowerCase();
-    let billingCycleEnum = 'MONTHLY';
-    if (lowerCycle === 'yearly' || lowerCycle === 'annual' || lowerCycle === 'annually') {
-      billingCycleEnum = 'YEARLY';
-    }
-
-    return {
-      kind: 'subscription',
-      userId,
-      planId,             // BASIC/PRO/BUSINESS
-      rawCycle,           // monthly/yearly (dari order_id)
-      billingCycleEnum,   // MONTHLY/YEARLY untuk Prisma
-    };
-  }
-
-  if (prefix === 'topup') {
-    // topup-{userId}-{creditAmount}-{timestamp}
-    const [, userIdStr, creditStr] = parts;
-
-    const userId = parseInt(userIdStr, 10);
-    const creditsAmount = parseInt(creditStr, 10);
-
-    if (!Number.isFinite(userId) || !Number.isFinite(creditsAmount)) {
-      return null;
-    }
-
-    return {
-      kind: 'topup',
-      userId,
-      creditsAmount,
-    };
-  }
-
-  return null;
-}
-
-/**
- * Mapping status Midtrans → status internal Transaction
- */
-function mapTransactionStatus(transactionStatus, fraudStatus) {
-  const ts = String(transactionStatus || '').toLowerCase();
-  const fs = String(fraudStatus || '').toLowerCase();
-
-  // SUCCESS conditions
-  if (ts === 'capture' && fs === 'accept') return 'SUCCESS';
-  if (ts === 'settlement') return 'SUCCESS';
-
-  if (ts === 'pending') return 'PENDING';
-
-  // Semua status lain kita anggap FAILED
+  // deny, expire, cancel, refund, chargeback, etc.
   return 'FAILED';
 }
 
-/**
- * Callback / notification endpoint dari Midtrans.
- * Wajib return 200 supaya Midtrans tidak retry terus.
- */
-async function handleCallback(req, res) {
+// Hitung periode billing dari sekarang
+function getNextPeriodRangeFromNow(billingCycleEnum) {
+  const now = new Date();
+  const periodStart = new Date(now);
+  const periodEnd = new Date(now);
+
+  if (billingCycleEnum === 'MONTHLY') {
+    periodEnd.setMonth(periodEnd.getMonth() + 1);
+  } else if (billingCycleEnum === 'YEARLY') {
+    periodEnd.setFullYear(periodEnd.getFullYear() + 1);
+  } else {
+    periodEnd.setMonth(periodEnd.getMonth() + 1);
+  }
+
+  return { periodStart, periodEnd };
+}
+
+// ------------------------------------------------------
+// POST /api/v1/payments/midtrans/callback
+// ------------------------------------------------------
+async function handleMidtransCallback(req, res) {
   try {
-    const payload = req.body || {};
-
+    const body = req.body || {};
     const {
-      order_id,
-      status_code,
-      gross_amount,
-      signature_key,
-      transaction_status,
-      fraud_status,
-      currency,
-    } = payload;
+      order_id: orderId,
+      status_code: statusCode,
+      gross_amount: grossAmount,
+      signature_key: signatureKey,
+      transaction_status: transactionStatus,
+    } = body;
 
-    if (!order_id || !status_code || !gross_amount || !signature_key) {
-      console.error('[MidtransCallback] Payload tidak lengkap:', payload);
-      return res.status(400).json({ message: 'Invalid Midtrans callback payload' });
+    if (!orderId || !statusCode || !grossAmount || !signatureKey) {
+      return res.status(400).json({
+        message: 'Missing required Midtrans fields',
+      });
     }
 
     // 1. Validasi signature
-    let expectedSignature;
-    try {
-      expectedSignature = computeSignature(order_id, status_code, gross_amount);
-    } catch (err) {
-      console.error('[MidtransCallback] Error computeSignature:', err);
-      return res.status(500).json({ message: 'Server misconfigured for Midtrans' });
+    const serverKey =
+      env.midtransServerKey || process.env.MIDTRANS_SERVER_KEY;
+
+    if (!serverKey) {
+      console.error('[MidtransCallback] MIDTRANS_SERVER_KEY not set');
+      return res.status(500).json({
+        message: 'Midtrans server key not configured',
+      });
     }
 
-    if (expectedSignature !== signature_key) {
-      console.error('[MidtransCallback] Invalid signature for order_id:', order_id);
-      return res.status(403).json({ message: 'Invalid signature' });
+    const expectedSignature = crypto
+      .createHash('sha512')
+      .update(orderId + statusCode + grossAmount + serverKey)
+      .digest('hex');
+
+    if (expectedSignature !== signatureKey) {
+      console.warn('[MidtransCallback] Invalid signature for order', orderId);
+      return res.status(400).json({ message: 'Invalid signature' });
     }
+
+    const txStatus = mapMidtransStatus(transactionStatus);
 
     // 2. Parse order_id
-    const parsed = parseOrderId(order_id);
-    if (!parsed) {
-      console.error('[MidtransCallback] Gagal parse order_id:', order_id);
-      return res.status(400).json({ message: 'Unknown order_id format' });
+    // subs-{userId}-{planId}-{billingCycle}-{timestamp}
+    // topup-{userId}-{creditAmount}-{timestamp}
+    const parts = String(orderId).split('-');
+    const prefix = parts[0];
+
+    if (prefix !== 'subs' && prefix !== 'topup') {
+      console.warn('[MidtransCallback] Unknown order prefix:', prefix);
+      // tetap 200 supaya Midtrans tidak retry terus, tapi tandai failed
+      return res.status(200).json({ message: 'Ignored unknown order type' });
     }
 
-    const txStatus = mapTransactionStatus(transaction_status, fraud_status);
-    const isSuccess = txStatus === 'SUCCESS';
+    const userId = Number(parts[1]);
+    if (!userId || Number.isNaN(userId)) {
+      console.error('[MidtransCallback] Invalid userId in orderId:', orderId);
+      return res.status(400).json({ message: 'Invalid user id in order id' });
+    }
 
-    const amountInt = parseInt(gross_amount, 10) || 0;
-    const currencyCode = currency || 'IDR';
+    const amountInt = parseInt(grossAmount, 10) || 0;
 
-    // 3. Upsert Transaction (idempotent untuk repeated notification)
-    const existingTx = await prisma.transaction.findUnique({
-      where: { orderId: order_id },
-    });
+    let type = '';
+    let plan = null;
+    let billingCycle = null;
+    let creditsChange = 0;
 
-    if (!existingTx) {
-      // Create baru
-      await prisma.transaction.create({
-        data: {
-          userId: parsed.userId,
-          type: parsed.kind === 'subscription' ? 'subscription' : 'topup',
-          plan: parsed.kind === 'subscription' ? parsed.planId : null,
-          billingCycle: parsed.kind === 'subscription' ? parsed.billingCycleEnum : null,
-          creditsChange:
-            isSuccess && parsed.kind === 'topup' ? parsed.creditsAmount : 0,
+    if (prefix === 'subs') {
+      // subs-12-BASIC-monthly-1733206150
+      const rawPlan = parts[2]; // BASIC / PRO / BUSINESS
+      const rawBillingCycle = parts[3]; // monthly / yearly
+
+      plan = String(rawPlan || '').toUpperCase(); // BASIC
+      const billingLower = String(rawBillingCycle || '').toLowerCase();
+      const billingEnum =
+        billingLower === 'yearly'
+          ? 'YEARLY'
+          : billingLower === 'monthly'
+          ? 'MONTHLY'
+          : 'MONTHLY';
+
+      billingCycle = billingEnum;
+      type = 'subscription';
+
+      // Ambil config plan untuk base credits
+      const cfg = getPlanConfig(plan, billingLower);
+      if (!cfg || !cfg.creditsPerPeriod) {
+        console.error(
+          '[MidtransCallback] No plan config for plan/billing:',
+          plan,
+          billingLower,
+        );
+        // tetap catat transaksi tapi tidak ubah user
+      } else if (txStatus === 'SUCCESS') {
+        creditsChange = cfg.creditsPerPeriod;
+      }
+    } else if (prefix === 'topup') {
+      // topup-12-5000-1733206150
+      const creditAmountRaw = parts[2];
+      const creditAmount = parseInt(creditAmountRaw, 10) || 0;
+
+      type = 'topup';
+      creditsChange = txStatus === 'SUCCESS' ? creditAmount : 0;
+    }
+
+    // 3. Upsert Transaction
+    let transaction;
+    try {
+      transaction = await prisma.transaction.upsert({
+        where: { orderId },
+        update: {
+          status: txStatus,
+          rawResponse: body,
+          updatedAt: new Date(),
+        },
+        create: {
+          userId,
+          type,
+          plan,
+          billingCycle,
+          creditsChange,
           amount: amountInt,
-          currency: currencyCode,
-          orderId: order_id,
+          currency: 'IDR',
+          orderId,
           status: txStatus,
           paymentGateway: 'MIDTRANS_SNAP',
-          rawResponse: payload,
+          rawResponse: body,
         },
       });
-    } else {
-      // Update status & rawResponse saja
-      await prisma.transaction.update({
-        where: { orderId: order_id },
-        data: {
-          status: txStatus,
-          rawResponse: payload,
-        },
-      });
+    } catch (err) {
+      console.error('[MidtransCallback] upsert Transaction error:', err);
+      // tetap 200 ke Midtrans biar tidak retry, tapi log error
+      return res.status(200).json({ message: 'ERROR_LOGGED' });
     }
 
-    // 4. Kalau status SUCCESS → update bisnis logic (subscription / topup)
-    //    Untuk menghindari double process, cek perubahan dari non-SUCCESS → SUCCESS.
-    const wasSuccessBefore = existingTx && existingTx.status === 'SUCCESS';
+    // 4. Kalau payment SUCCESS → update Subscription / Credits
+    if (txStatus === 'SUCCESS') {
+      if (type === 'subscription' && plan && billingCycle) {
+        const billingLower =
+          billingCycle === 'YEARLY' ? 'yearly' : 'monthly';
+        const cfg = getPlanConfig(plan, billingLower);
 
-    if (isSuccess && !wasSuccessBefore) {
-      if (parsed.kind === 'subscription') {
-        // OPTIONAL: validasi plan & cycle dengan getPlanConfig (logging saja)
-        const cfg = getPlanConfig(parsed.planId, parsed.billingCycleEnum);
-        if (!cfg || !cfg.creditsPerPeriod) {
-          console.warn(
-            `[MidtransCallback] getPlanConfig tidak valid untuk plan=${parsed.planId}, cycle=${parsed.billingCycleEnum}`,
-          );
+        if (cfg && cfg.creditsPerPeriod) {
+          const { periodStart, periodEnd } =
+            getNextPeriodRangeFromNow(billingCycle);
+
+          try {
+            await prisma.$transaction(async (tx) => {
+              // Upsert subscription user
+              await tx.subscription.upsert({
+                where: { userId },
+                update: {
+                  plan,
+                  billingCycle,
+                  status: 'ACTIVE',
+                  currentPeriodStart: periodStart,
+                  currentPeriodEnd: periodEnd,
+                  updatedAt: new Date(),
+                },
+                create: {
+                  userId,
+                  plan,
+                  billingCycle,
+                  status: 'ACTIVE',
+                  currentPeriodStart: periodStart,
+                  currentPeriodEnd: periodEnd,
+                },
+              });
+
+              // Set credits user ke base credits plan
+              await tx.user.update({
+                where: { id: userId },
+                data: {
+                  plan,
+                  credits: cfg.creditsPerPeriod,
+                  updatedAt: new Date(),
+                },
+              });
+            });
+
+            console.log(
+              `[MidtransCallback] Activated subscription for userId=${userId}, plan=${plan}, billing=${billingCycle}`,
+            );
+          } catch (err) {
+            console.error(
+              '[MidtransCallback] Error updating subscription/user:',
+              err,
+            );
+            // Jangan balas error ke Midtrans, cukup log
+          }
         }
+      }
 
-        // Terapkan paid plan → reset credits & set subscription periode
-        await applyPaidPlan(parsed.userId, parsed.planId, parsed.billingCycleEnum);
-      } else if (parsed.kind === 'topup') {
-        // Tambahkan credits user
-        await userService.increaseCredits(parsed.userId, parsed.creditsAmount);
+      if (type === 'topup' && creditsChange > 0) {
+        try {
+          await prisma.user.update({
+            where: { id: userId },
+            data: {
+              credits: { increment: creditsChange },
+              updatedAt: new Date(),
+            },
+          });
+
+          console.log(
+            `[MidtransCallback] Topup credits userId=${userId} +${creditsChange}`,
+          );
+        } catch (err) {
+          console.error('[MidtransCallback] Error topup credits:', err);
+        }
       }
     }
 
-    // 5. Wajib return 200 ke Midtrans
+    // Wajib 200 supaya Midtrans tidak retry
     return res.status(200).json({ message: 'OK' });
   } catch (err) {
-    console.error('[MidtransCallback] Unhandled error:', err);
-    // Tetap return 200 supaya Midtrans tidak spam retry dengan error 5xx,
-    // tapi log error untuk investigasi.
+    console.error('[MidtransCallback] Unexpected error:', err);
+    // Tetap 200 ke Midtrans, tapi beri info
     return res.status(200).json({ message: 'ERROR_LOGGED' });
   }
 }
 
 module.exports = {
-  handleCallback,
+  handleMidtransCallback,
 };
