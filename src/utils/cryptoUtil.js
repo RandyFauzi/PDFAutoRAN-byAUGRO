@@ -1,6 +1,6 @@
 // src/utils/cryptoUtil.js
 const crypto = require('crypto');
-s
+
 const ALGORITHM = 'aes-256-cbc';
 const IV_LENGTH = 16; // bytes
 
