@@ -8,8 +8,8 @@ const userService = require('../services/user.service');
 const pdfService = require('../services/pdf.service');
 const fs = require('fs');
 const path = require('path');
-const { compressPdfFile } = require('../services/pdfCompress.service');
-
+const { downloadAsBuffer } = require('../helpers/...');
+const { compressPdfBuffer } = require('../services/pdfCompress.service');
 // =========================
 // HELPER: HTML -> PDF BUFFER
 // =========================
