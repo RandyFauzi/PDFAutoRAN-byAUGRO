@@ -71,26 +71,32 @@ module.exports = {
       return [];
     }
 
+    // decrypt dulu
+    const decrypted = key.plainKeyEncrypted
+      ? decrypt(key.plainKeyEncrypted)
+      : null;
+
+    // pastikan hasil decrypt jadi STRING biasa
+    let plainKey = null;
+    if (decrypted) {
+      if (Buffer.isBuffer(decrypted)) {
+        plainKey = decrypted.toString('utf8');
+      } else {
+        plainKey = String(decrypted);
+      }
+    }
+
     return [
       {
         id: key.id,
         label: key.label,
-        key: key.plainKeyEncrypted ? decrypt(key.plainKeyEncrypted) : null, // ⭐ plain key untuk frontend
+        key: plainKey,            
         createdAt: key.createdAt,
         status: key.revokedAt ? 'revoked' : 'active',
       },
     ];
   },
 
-  /**
-   * Revoke key (kalau kamu tetap mau fitur revoke manual)
-   */
-  async revokeKey(id, userId) {
-    return prisma.apiKey.updateMany({
-      where: { id, userId, revokedAt: null },
-      data: { revokedAt: new Date() },
-    });
-  },
 
   /**
    * Validasi raw API key (dipakai di middleware auth by API key)
