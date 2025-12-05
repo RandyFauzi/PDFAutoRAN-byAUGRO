@@ -22,6 +22,7 @@ const { notFound, errorHandler } = require('./middleware/errorHandler');
 
 const app = express();
 
+
 // ----------------------------------------------------
 // Global middleware
 // ----------------------------------------------------
@@ -29,6 +30,7 @@ app.use(helmet()); // Security headers
 app.use(cors());   // CORS (nantinya bisa dibuat whitelist origin)
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.set('trust proxy', 1);
 
 // Logging (development only)
 if (env.nodeEnv === 'development') {
