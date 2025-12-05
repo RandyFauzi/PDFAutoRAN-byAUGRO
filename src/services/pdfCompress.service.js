@@ -3,9 +3,9 @@ const { spawn } = require('child_process');
 
 function compressPdfBuffer(inputBuffer, quality = 'medium') {
   const qualityMap = {
-    low: '/screen',   // paling kecil
-    medium: '/ebook', // default
-    high: '/printer', // kualitas tinggi
+    low: '/screen',   // kompres paling kuat, kualitas rendah
+    medium: '/ebook', // default: seimbang
+    high: '/printer', // kualitas tinggi, kompres lebih ringan
   };
 
   const q = qualityMap[quality] || qualityMap.medium;
@@ -18,10 +18,20 @@ function compressPdfBuffer(inputBuffer, quality = 'medium') {
       '-dNOPAUSE',
       '-dBATCH',
       '-dQUIET',
+
+      // 🔒 Penting supaya tidak nambah halaman & layout tetap:
       '-dDetectDuplicateImages=true',
       '-dCompressFonts=true',
-      '-sOutputFile=-',
-      '-', // input dari stdin
+      '-dUseCropBox',            // pakai cropbox agar size halaman asli dipertahankan
+      '-dPreserveEPSInfo=true',  // jaga struktur halaman (header/footer dll)
+
+      // (opsional) jaga downsampling tapi nggak wajib diubah:
+      // '-dColorImageDownsampleType=/Bicubic',
+      // '-dGrayImageDownsampleType=/Bicubic',
+      // '-dMonoImageDownsampleType=/Subsample',
+
+      '-sOutputFile=-', // output ke stdout
+      '-',              // input dari stdin
     ];
 
     const gs = spawn('gs', args);
