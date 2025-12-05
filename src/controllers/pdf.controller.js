@@ -1,15 +1,14 @@
 // src/controllers/pdf.controller.js
 const { PDFDocument } = require('pdf-lib');
-const puppeteer = require('puppeteer'); // atau puppeteer-core + chromium kalau kamu sudah set
+const puppeteer = require('puppeteer');
 const axios = require('axios');
 
 const env = require('../config/env');
 const userService = require('../services/user.service');
 const pdfService = require('../services/pdf.service');
-const fs = require('fs');
-const path = require('path');
-const { downloadAsBuffer } = require('../helpers/...');
 const { compressPdfBuffer } = require('../services/pdfCompress.service');
+
+
 // =========================
 // HELPER: HTML -> PDF BUFFER
 // =========================
@@ -39,6 +38,8 @@ async function htmlToPdfBuffer(html) {
 
 // Ambil fileId dari URL Drive berbentuk:
 // https://drive.google.com/file/d/FILE_ID/view?usp=...
+
+
 function normalizeDriveUrl(url) {
   const match = url.match(/\/file\/d\/([^/]+)\//);
   if (!match) return url;
@@ -47,6 +48,7 @@ function normalizeDriveUrl(url) {
 }
 
 // Download URL (bisa Google Drive, bisa URL lain) -> Buffer
+
 async function downloadAsBuffer(rawUrl, index) {
   const isDrive = rawUrl.includes('drive.google.com');
   const normalizedUrl = isDrive ? normalizeDriveUrl(rawUrl) : rawUrl;
