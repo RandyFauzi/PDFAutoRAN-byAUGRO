@@ -14,4 +14,11 @@ router.post('/login', authController.login);
 // Hanya bisa diakses jika sudah login (punya JWT valid)
 router.get('/me', authMiddleware, authController.me);
 
+// GANTI PASSWORD (butuh user login / JWT)
+router.post(
+  '/auth/change-password',
+  authMiddleware,          // middleware yang isi req.user
+  authController.changePassword
+);
+
 module.exports = router;

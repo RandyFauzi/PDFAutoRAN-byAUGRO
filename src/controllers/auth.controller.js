@@ -136,8 +136,60 @@ async function me(req, res) {
   }
 }
 
+const bcrypt = require('bcryptjs');
+const prisma = require('../config/prisma');
+
+async function changePassword(req, res) {
+  try {
+    const userId = req.user && req.user.id; // dari authMiddleware (JWT)
+    const { currentPassword, newPassword } = req.body;
+
+    if (!userId) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ message: 'currentPassword & newPassword required' });
+    }
+
+    // 1) Ambil user dari DB
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user || !user.password) {
+      return res.status(404).json({ message: 'User tidak ditemukan' });
+    }
+
+    // 2) Cek password lama
+    const isMatch = await bcrypt.compare(currentPassword, user.password);
+    if (!isMatch) {
+      return res.status(400).json({ message: 'Password saat ini tidak sesuai' });
+    }
+
+    // 3) Hash password baru
+    const hashed = await bcrypt.hash(newPassword, 10);
+
+    // 4) Update ke DB
+    await prisma.user.update({
+      where: { id: userId },
+      data: {
+        password: hashed,
+        // optional:
+        // passwordUpdatedAt: new Date(),
+      },
+    });
+
+    return res.json({ message: 'Password berhasil diperbarui' });
+  } catch (err) {
+    console.error('[AuthController] changePassword error:', err);
+    return res.status(500).json({ message: 'Gagal mengubah password' });
+  }
+}
+
 module.exports = {
   register,
   login,
   me,
+  changePassword,
 };
