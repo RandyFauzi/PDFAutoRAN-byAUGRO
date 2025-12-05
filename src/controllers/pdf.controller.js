@@ -106,14 +106,6 @@ async function downloadAsBuffer(rawUrl, index) {
 // CONTROLLER: HTML -> PDF
 // =========================
 
-// =========================
-// CONTROLLER: HTML -> PDF
-// =========================
-
-// =========================
-// CONTROLLER: HTML -> PDF
-// =========================
-
 async function htmlToPdf(req, res) {
   try {
     const userId = req.user.id; // tetap ada, kalau mau dipakai logging di masa depan
@@ -329,10 +321,28 @@ async function compressPdf(req, res) {
       return res.status(400).json({ message: 'Field "pdfUrl" wajib diisi.' });
     }
 
+    // 1. Download PDF asli
     const originalBuffer = await downloadAsBuffer(String(pdfUrl).trim(), 'pdf-compress');
 
-    const compressedBuffer = await compressPdfBuffer(originalBuffer, quality);
+    // Hitung jumlah halaman asli (DEBUG)
+    const origDoc = await PDFDocument.load(originalBuffer);
+    const originalPages = origDoc.getPageCount();
+    console.log(`[COMPRESS] Original pages: ${originalPages}`);
 
+    // 2. Compress pakai Ghostscript
+    const compressedBufferRaw = await compressPdfBuffer(originalBuffer, quality);
+
+    // 3. Pastikan hasil TIDAK menambah halaman
+    const safeBuffer = await adjustCompressedPages(
+      originalBuffer,
+      compressedBufferRaw
+    );
+
+    // Debug tampilan final
+    const finalDoc = await PDFDocument.load(safeBuffer);
+    console.log(`[COMPRESS] Final pages: ${finalDoc.getPageCount()}`);
+
+    // 4. Kirim PDF hasil akhir
     const safeName =
       (fileName && String(fileName).trim()) || 'compressed-document';
     const sanitizedName = safeName.replace(/[^a-zA-Z0-9_\-]/g, '_');
@@ -343,9 +353,9 @@ async function compressPdf(req, res) {
       'Content-Disposition',
       `inline; filename="${sanitizedName}.pdf"`
     );
-    res.setHeader('Content-Length', compressedBuffer.length);
+    res.setHeader('Content-Length', safeBuffer.length);
 
-    return res.end(compressedBuffer);
+    return res.end(safeBuffer);
   } catch (err) {
     console.error('Error compressPdf:', err);
     return res.status(500).json({
@@ -353,6 +363,32 @@ async function compressPdf(req, res) {
       detail: err.message,
     });
   }
+}
+
+
+
+async function adjustCompressedPages(originalBuffer, compressedBuffer) {
+  const origDoc = await PDFDocument.load(originalBuffer);
+  const compDoc = await PDFDocument.load(compressedBuffer);
+
+  const origCount = origDoc.getPageCount();
+  const compCount = compDoc.getPageCount();
+
+  // Kalau jumlahnya sama → aman
+  if (origCount === compCount) return compressedBuffer;
+
+  // Kalau Ghostscript menghasilkan halaman lebih banyak → trim
+  const out = await PDFDocument.create();
+  const copyIndices = Array.from(
+    { length: Math.min(origCount, compCount) },
+    (_, i) => i
+  );
+
+  const copiedPages = await out.copyPages(compDoc, copyIndices);
+  copiedPages.forEach((p) => out.addPage(p));
+
+  const finalBytes = await out.save();
+  return Buffer.from(finalBytes);
 }
 
 module.exports = {
