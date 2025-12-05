@@ -6,6 +6,9 @@ const axios = require('axios');
 const env = require('../config/env');
 const userService = require('../services/user.service');
 const pdfService = require('../services/pdf.service');
+const fs = require('fs');
+const path = require('path');
+const { compressPdfFile } = require('../services/pdfCompress.service');
 
 // =========================
 // HELPER: HTML -> PDF BUFFER
@@ -311,11 +314,75 @@ async function stampPdf(req, res) {
   }
 }
 
+// =========================
+// CONTROLLER: COMPRESS PDF
+// =========================
+
+async function compressPdf(req, res) {
+  try {
+    const userId = req.user.id; // kalau mau dipakai di UserLog/credits, tetap tersedia
+
+    const { pdfUrl, quality = 'medium', fileName } = req.body;
+
+    if (!pdfUrl || typeof pdfUrl !== 'string' || !pdfUrl.trim()) {
+      return res.status(400).json({
+        message: 'Field "pdfUrl" wajib diisi dan harus berupa string.',
+      });
+    }
+
+    // 1. Download PDF dari URL (bisa Google Drive, dll) pakai helper existing
+    const pdfBuffer = await downloadAsBuffer(String(pdfUrl).trim(), 'pdf');
+
+    // 2. Simpan sementara ke disk karena Ghostscript butuh path file
+    const tmpDir = path.join(__dirname, '..', '..', 'tmp');
+    if (!fs.existsSync(tmpDir)) {
+      fs.mkdirSync(tmpDir, { recursive: true });
+    }
+    const inputPath = path.join(
+      tmpDir,
+      `compress-src-${Date.now()}-${Math.random()}.pdf`,
+    );
+
+    await fs.promises.writeFile(inputPath, pdfBuffer);
+
+    // 3. Panggil service Ghostscript
+    const compressedBuffer = await compressPdfFile(inputPath, quality);
+
+    // 4. Bersihkan file sumber (opsional, tapi bagus)
+    fs.unlink(inputPath, () => {});
+
+    // 5. Kirim balik PDF hasil kompres ke client
+    const safeName =
+      (fileName && String(fileName).trim()) || 'compressed-document';
+    const sanitizedName = safeName.replace(/[^a-zA-Z0-9_\-]/g, '_');
+
+    const finalBuffer = Buffer.isBuffer(compressedBuffer)
+      ? compressedBuffer
+      : Buffer.from(compressedBuffer);
+
+    res.status(200);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="${sanitizedName}.pdf"`,
+    );
+    res.setHeader('Content-Length', finalBuffer.length);
+
+    return res.end(finalBuffer);
+  } catch (err) {
+    console.error('Error compressPdf:', err);
+    return res.status(500).json({
+      message: 'Terjadi kesalahan saat kompres PDF.',
+      detail: err.message,
+    });
+  }
+}
 
 
 module.exports = {
   htmlToPdf,
   mergePdf,
   stampPdf,
+  compressPdf,
 };
 

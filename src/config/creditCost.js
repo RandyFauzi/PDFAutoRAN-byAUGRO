@@ -10,7 +10,9 @@
 const COST = {
   HTML_TO_PDF: 20, // tugas paling berat (Puppeteer/Chromium)
   MERGE: 15,       // medium
-  STAMP: 10,       // ringan
+  STAMP: 15,  
+  PDF_COMPRESS: 15,
+       // ringan
 };
 
 // Paket & pricing (dalam Rupiah)

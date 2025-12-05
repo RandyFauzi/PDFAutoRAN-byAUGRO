@@ -34,4 +34,12 @@ router.post(
   pdfController.stampPdf   // <== SAMA persis dengan export di pdf.controller.js
 );
 
+// Compres PDF dari URL
+router.post(
+  '/compress',
+  authByApiKey,
+  checkAndConsumeCredits('PDF_COMPRESS'),
+  pdfController.compressPdf
+);
+
 module.exports = router;
