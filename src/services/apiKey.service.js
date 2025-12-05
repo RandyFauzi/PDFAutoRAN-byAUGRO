@@ -1,6 +1,6 @@
 const crypto = require('crypto');
 const prisma = require('../config/prisma');
-const { encrypt, decrypt } = require('../utils/cryptoUtil'); // pastikan file ini sudah ada
+// const { encrypt, decrypt } = require('../utils/cryptoUtil'); // pastikan file ini sudah ada
 
 module.exports = {
   /**
@@ -10,12 +10,13 @@ module.exports = {
    * - Simpan hash + plainKeyEncrypted
    */
   async createApiKey(userId, label) {
-    // 1) Generate key baru
+    // 1) Generate key baru (hex string)
     const rawKey = crypto.randomBytes(32).toString('hex');
     const hashed = crypto.createHash('sha256').update(rawKey).digest('hex');
-    const encrypted = encrypt(rawKey);
 
-    // 2) Cek apakah user sudah punya ApiKey
+    // NOTED: kita simpan rawKey langsung sebagai plainKeyEncrypted
+    const storedPlain = rawKey;
+
     const existing = await prisma.apiKey.findFirst({
       where: { userId },
     });
@@ -23,25 +24,25 @@ module.exports = {
     let apiKey;
 
     if (existing) {
-      // 🔁 UPDATE row lama → tetap 1 baris per user
+      // update key lama → tetap 1 row per user
       apiKey = await prisma.apiKey.update({
         where: { id: existing.id },
         data: {
           label,
           keyHash: hashed,
-          plainKeyEncrypted: encrypted,
-          revokedAt: null,       // pastikan aktif
-          createdAt: new Date(), // optional, refresh waktu
+          plainKeyEncrypted: storedPlain,
+          revokedAt: null,
+          createdAt: new Date(),
         },
       });
     } else {
-      // ➕ Belum ada → buat baru
+      // buat baru
       apiKey = await prisma.apiKey.create({
         data: {
           userId,
           label,
           keyHash: hashed,
-          plainKeyEncrypted: encrypted,
+          plainKeyEncrypted: storedPlain,
           revokedAt: null,
         },
       });
@@ -60,42 +61,26 @@ module.exports = {
     const key = await prisma.apiKey.findFirst({
       where: {
         userId,
-        revokedAt: null, // hanya aktif
+        revokedAt: null,
       },
       orderBy: {
         createdAt: 'desc',
       },
     });
 
-    if (!key) {
-      return [];
-    }
-
-    // decrypt dulu
-    const decrypted = key.plainKeyEncrypted
-      ? decrypt(key.plainKeyEncrypted)
-      : null;
-
-    // pastikan hasil decrypt jadi STRING biasa
-    let plainKey = null;
-    if (decrypted) {
-      if (Buffer.isBuffer(decrypted)) {
-        plainKey = decrypted.toString('utf8');
-      } else {
-        plainKey = String(decrypted);
-      }
-    }
+    if (!key) return [];
 
     return [
       {
         id: key.id,
         label: key.label,
-        key: plainKey,            
+        key: key.plainKeyEncrypted || null, // ✅ plain hex string
         createdAt: key.createdAt,
         status: key.revokedAt ? 'revoked' : 'active',
       },
     ];
   },
+
 
 
   /**
