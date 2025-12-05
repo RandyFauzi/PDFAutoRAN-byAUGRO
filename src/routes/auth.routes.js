@@ -16,8 +16,8 @@ router.get('/me', authMiddleware, authController.me);
 
 // GANTI PASSWORD (butuh user login / JWT)
 router.post(
-  '/auth/change-password',
-  authMiddleware,          // middleware yang isi req.user
+  '/change-password',        // ✅ BUKAN '/auth/change-password'
+  authMiddleware,
   authController.changePassword
 );
 
