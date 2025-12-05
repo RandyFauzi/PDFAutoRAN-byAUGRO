@@ -3,6 +3,8 @@ const jwt = require('jsonwebtoken');
 const env = require('../config/env');
 const userService = require('../services/user.service');
 const { applyFreePlan } = require('../services/subscription.service');
+const bcrypt = require('bcryptjs');
+const prisma = require('../config/prisma');
 
 // Helper untuk membuat JWT
 function signToken(user) {
@@ -135,9 +137,6 @@ async function me(req, res) {
       .json({ message: 'Terjadi kesalahan pada server.' });
   }
 }
-
-const bcrypt = require('bcryptjs');
-const prisma = require('../config/prisma');
 
 async function changePassword(req, res) {
   try {
