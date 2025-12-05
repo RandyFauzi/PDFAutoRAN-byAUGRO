@@ -10,6 +10,7 @@ const authMiddleware = require('../middleware/authMiddleware');
 const { useCredit } = require('../middleware/creditMiddleware');
 const pdfController = require('../controllers/pdf.controller');
 
+
 // HTML -> PDF
 router.post(
   '/html-to-pdf',
@@ -34,11 +35,11 @@ router.post(
   pdfController.stampPdf   // <== SAMA persis dengan export di pdf.controller.js
 );
 
-// Compres PDF dari URL
+// Compress PDF dari URL
 router.post(
   '/compress',
-  authByApiKey,
-  checkAndConsumeCredits('PDF_COMPRESS'),
+  authMiddleware,
+  useCredit('PDF_COMPRESS'),
   pdfController.compressPdf
 );
 
