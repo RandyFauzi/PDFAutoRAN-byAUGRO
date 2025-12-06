@@ -9,6 +9,8 @@ router.post('/register', authController.register);
 
 // POST /api/v1/auth/login
 router.post('/login', authController.login);
+router.get('/verify-email', authController.verifyEmail);
+
 
 // GET /api/v1/auth/me
 // Hanya bisa diakses jika sudah login (punya JWT valid)

@@ -4,6 +4,8 @@ const userService = require('../services/user.service');
 const { applyFreePlan } = require('../services/subscription.service');
 const bcrypt = require('bcryptjs');
 const prisma = require('../config/prisma');
+const crypto = require('crypto');
+const { sendVerificationEmail } = require('../services/email.service');
 
 // Helper untuk membuat JWT
 function signToken(user) {
@@ -41,12 +43,35 @@ async function register(req, res) {
     const passwordHash = await bcrypt.hash(password, saltRounds);
 
     // Buat user baru — credits selalu mulai dari 0
+    // isVerified akan default false dari schema Prisma
     const newUser = await userService.createUser(email, passwordHash);
 
     // Terapkan FREE plan → apply initialCredits sekali saja
     const userWithFreePlan = await applyFreePlan(newUser.id);
 
-    // Buat token
+    // 🔹 Generate token verifikasi unik
+    const verificationToken = crypto.randomUUID(); // atau crypto.randomBytes(32).toString('hex')
+
+    // 🔹 Simpan token di tabel EmailVerificationToken
+    await prisma.emailVerificationToken.create({
+      data: {
+        userId: userWithFreePlan.id,
+        token: verificationToken,
+        // contoh: masa berlaku 24 jam
+        expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24),
+      },
+    });
+
+    // 🔹 Susun link verifikasi (ini URL ke frontend kamu)
+    const verifyLink = `https://pdfautoran.com/verify-email?token=${verificationToken}`;
+
+    // 🔹 Kirim email verifikasi
+    await sendVerificationEmail({
+      to: userWithFreePlan.email,
+      link: verifyLink,
+    });
+
+    // Buat token JWT seperti biasa (walau user belum verifikasi)
     const token = signToken(userWithFreePlan);
 
     return res.status(201).json({
@@ -66,6 +91,7 @@ async function register(req, res) {
       .json({ message: 'Terjadi kesalahan pada server.' });
   }
 }
+
 
 // ========================================
 // POST /api/v1/auth/login
@@ -96,6 +122,13 @@ async function login(req, res) {
         .json({ message: 'Email atau password salah.' });
     }
 
+    // 🔹 Tambahan: blokir kalau email belum terverifikasi
+    if (!user.isVerified) {
+      return res
+        .status(403)
+        .json({ message: 'Email Anda belum terverifikasi. Silakan cek email Anda.' });
+    }
+
     // Buat token
     const token = signToken(user);
 
@@ -116,6 +149,82 @@ async function login(req, res) {
       .json({ message: 'Terjadi kesalahan pada server.' });
   }
 }
+
+// ========================================
+// GET /api/v1/auth/verify-email?token=...
+// ========================================
+async function verifyEmail(req, res) {
+  try {
+    const { token } = req.query;
+
+    if (!token) {
+      return res
+        .status(400)
+        .json({ message: 'Token verifikasi diperlukan.' });
+    }
+
+    // Cari token di tabel EmailVerificationToken
+    const record = await prisma.emailVerificationToken.findUnique({
+      where: { token },
+      include: {
+        user: true,
+      },
+    });
+
+    if (!record) {
+      return res
+        .status(400)
+        .json({ message: 'Token verifikasi tidak valid atau sudah kedaluwarsa.' });
+    }
+
+    // Cek kadaluarsa
+    if (record.expiresAt < new Date()) {
+      // Optional: hapus token yang kadaluarsa
+      await prisma.emailVerificationToken.delete({
+        where: { id: record.id },
+      });
+
+      return res
+        .status(400)
+        .json({ message: 'Token verifikasi sudah kedaluwarsa.' });
+    }
+
+    // Kalau user sudah terverifikasi sebelumnya
+    if (record.user && record.user.isVerified) {
+      // Optional: hapus token karena sudah tidak diperlukan
+      await prisma.emailVerificationToken.delete({
+        where: { id: record.id },
+      });
+
+      return res.json({
+        message: 'Email sudah terverifikasi sebelumnya. Silakan login.',
+      });
+    }
+
+    // Update user → set isVerified = true
+    await prisma.user.update({
+      where: { id: record.userId },
+      data: { isVerified: true },
+    });
+
+    // Hapus token agar tidak bisa dipakai lagi
+    await prisma.emailVerificationToken.delete({
+      where: { id: record.id },
+    });
+
+    // Untuk sekarang kita kirim JSON saja dulu
+    // Nanti Laravel bisa panggil endpoint ini dari route /verify-email
+    return res.json({
+      message: 'Email berhasil diverifikasi. Silakan login.',
+    });
+  } catch (err) {
+    console.error('Verify email error:', err);
+    return res
+      .status(500)
+      .json({ message: 'Terjadi kesalahan pada server.' });
+  }
+}
+
 
 // ========================================
 // GET /api/v1/auth/me
@@ -188,6 +297,7 @@ async function changePassword(req, res) {
 module.exports = {
   register,
   login,
+  verifyEmail,
   me,
   changePassword,
 };

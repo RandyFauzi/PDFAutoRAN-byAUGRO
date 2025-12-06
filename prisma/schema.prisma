@@ -38,14 +38,14 @@ model User {
   credits            Int      @default(0)
   plan               String   @default("FREE")
   freeInitialGranted Boolean  @default(false)
-  transactions Transaction[]
+  isVerified         Boolean  @default(false)
+
+  transactions       Transaction[]
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
-  
-
-  subscription Subscription?
-  usageLogs    UsageLog[]
-  apiKeys      ApiKey[]
+  subscription       Subscription?
+  usageLogs          UsageLog[]
+  apiKeys            ApiKey[]
 }
 
 model Subscription {
@@ -104,4 +104,13 @@ model Transaction {
   updatedAt       DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id])
+}
+
+model EmailVerificationToken {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  token     String   @unique
+  expiresAt DateTime
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
