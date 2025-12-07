@@ -8,6 +8,7 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const morgan = require('morgan');
 
+
 const env = require('./config/env');
 
 // Import routes
@@ -17,6 +18,8 @@ const adminRoutes = require('./routes/admin.routes');
 const apiKeyRoutes = require('./routes/apiKey.routes');
 const usageRoutes = require('./routes/usage.routes');
 const midtransRoutes = require('./routes/midtrans.routes');
+const danaRoutes = require('./routes/dana.routes');
+
 
 const { notFound, errorHandler } = require('./middleware/errorHandler');
 
@@ -31,6 +34,7 @@ app.use(cors());   // CORS (nantinya bisa dibuat whitelist origin)
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.set('trust proxy', 1);
+app.use('/api/v1', danaRoutes);
 
 // Logging (development only)
 if (env.nodeEnv === 'development') {
