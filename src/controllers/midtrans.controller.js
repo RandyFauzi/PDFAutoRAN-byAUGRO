@@ -4,21 +4,20 @@
 // dan callback notifikasi dari Midtrans.
 // -----------------------------------------------------
 
-const midtransClient = require('midtrans-client');
 const crypto = require('crypto');
-
 const env = require('../config/env');
 const { getPlanConfig } = require('../config/creditCost');
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
-const logger = require('../utils/logger');
+const prisma = require('../config/prisma');
+const { snap } = require('../config/midtrans');
 
-// Inisialisasi Snap dari env
-const snap = new midtransClient.Snap({
-  isProduction: env.midtransIsProduction,   // pastikan ada di env.js
-  serverKey: env.midtransServerKey,
-  clientKey: env.midtransClientKey,
-});
+// Fallback logger: pakai console kalau utils/logger tidak ada
+let logger = console;
+try {
+  // Optional: kalau file ada, pakai
+  logger = require('../utils/logger');
+} catch (e) {
+  console.warn('[MIDTRANS] utils/logger tidak ditemukan, pakai console.');
+}
 
 /**
  * POST /api/v1/payments/midtrans/create-subscription
@@ -126,7 +125,6 @@ exports.createSubscription = async (req, res) => {
 /**
  * POST /api/v1/payments/midtrans/callback
  * Endpoint untuk menerima notifikasi status pembayaran dari Midtrans.
- * URL ini harus diisi di dashboard Midtrans (Notification URL).
  */
 exports.handleCallback = async (req, res) => {
   try {
@@ -142,7 +140,7 @@ exports.handleCallback = async (req, res) => {
       fraud_status,
     } = notif;
 
-    // 1. Verifikasi signature (security best practice)
+    // 1. Verifikasi signature
     const serverKey = env.midtransServerKey;
     const expectedSignature = crypto
       .createHash('sha512')
@@ -154,7 +152,7 @@ exports.handleCallback = async (req, res) => {
       return res.status(403).json({ message: 'Invalid signature' });
     }
 
-    // 2. Mapping status Midtrans -> status internal
+    // 2. Mapping status
     let newStatus = 'PENDING';
 
     if (transaction_status === 'capture') {
@@ -185,13 +183,12 @@ exports.handleCallback = async (req, res) => {
       status: newStatus,
     });
 
-    // 4. Kalau pembayaran SUCCESS & tipe-nya subscription → update Subscription & User
+    // 4. Kalau SUCCESS dan tipe-nya subscription → update Subscription & User
     if (newStatus === 'SUCCESS' && updatedTx.type === 'subscription') {
       const userId = updatedTx.userId;
       const plan   = String(updatedTx.plan).toUpperCase();          // BASIC/PRO/BUSINESS
       const cycle  = String(updatedTx.billingCycle).toLowerCase();   // monthly/yearly
 
-      // Ambil config plan dari creditCost.js
       const planConfig = getPlanConfig(plan, cycle);
       if (!planConfig) {
         logger.error('Plan config not found on callback', { plan, cycle });
@@ -206,12 +203,11 @@ exports.handleCallback = async (req, res) => {
           end.setFullYear(end.getFullYear() + 1);
         }
 
-        // Upsert Subscription (kalau sudah ada → update, kalau belum → create)
         await prisma.subscription.upsert({
           where: { userId },
           update: {
-            plan,
-            billingCycle: cycle.toUpperCase(), // "MONTHLY"/"YEARLY"
+            plan,                            // enum Plan
+            billingCycle: cycle.toUpperCase(), // enum BillingCycle
             status: 'ACTIVE',
             currentPeriodStart: now,
             currentPeriodEnd: end,
@@ -226,11 +222,10 @@ exports.handleCallback = async (req, res) => {
           },
         });
 
-        // Update User: set plan & tambah credits
         await prisma.user.update({
           where: { id: userId },
           data: {
-            plan, // "BASIC" | "PRO" | "BUSINESS"
+            plan,
             credits: {
               increment: creditsPerPeriod,
             },
@@ -250,8 +245,6 @@ exports.handleCallback = async (req, res) => {
       error: err.message,
       body: req.body,
     });
-    // Midtrans akan coba ulang kalau bukan 200,
-    // tapi 500 nggak apa saat debug.
     return res.status(500).json({ message: 'Internal server error' });
   }
 };

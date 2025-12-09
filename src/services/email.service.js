@@ -1,35 +1,46 @@
 // src/services/email.service.js
 const nodemailer = require('nodemailer');
+const env = require('../config/env');
 
 const transporter = nodemailer.createTransport({
-  service: 'gmail', // sementara pakai Gmail
+  service: 'gmail',
   auth: {
-    user: process.env.MAIL_USER,
-    pass: process.env.MAIL_PASS,
+    user: env.mailUser,
+    pass: env.mailPass,
   },
 });
 
+/**
+ * Kirim email verifikasi
+ * @param {Object} params
+ * @param {string} params.to   - email tujuan
+ * @param {string} params.link - link verifikasi lengkap
+ */
 async function sendVerificationEmail({ to, link }) {
-  const fromAddress = process.env.MAIL_FROM || `PDF AUTORAN <${process.env.MAIL_USER}>`;
+  if (!env.mailUser || !env.mailPass) {
+    console.error('[EMAIL] MAIL_USER / MAIL_PASS belum di-set di .env');
+    return;
+  }
 
   const mailOptions = {
-    from: fromAddress,
+    from: env.mailFrom,
     to,
-    subject: 'Verifikasi Email Akun PDF AUTORAN',
+    subject: 'Verifikasi Email - PDF AUTORAN',
     html: `
       <p>Halo,</p>
       <p>Terima kasih telah mendaftar di <b>PDF AUTORAN</b>.</p>
-      <p>Untuk mengaktifkan akun Anda, silakan klik tautan verifikasi berikut:</p>
+      <p>Silakan klik link berikut untuk verifikasi email Anda:</p>
       <p><a href="${link}" target="_blank">${link}</a></p>
-      <p>Tautan ini berlaku selama 24 jam.</p>
-      <p>Jika Anda tidak merasa mendaftar di PDF AUTORAN, abaikan email ini.</p>
-      <br/>
-      <p>Salam,</p>
-      <p><b>Tim PDF AUTORAN</b></p>
+      <p>Jika Anda tidak merasa mendaftar, abaikan email ini.</p>
     `,
   };
 
-  await transporter.sendMail(mailOptions);
+  try {
+    const info = await transporter.sendMail(mailOptions);
+    console.log('[EMAIL] Verifikasi terkirim:', info.messageId);
+  } catch (err) {
+    console.error('[EMAIL] Gagal kirim verifikasi:', err.message);
+  }
 }
 
 module.exports = {

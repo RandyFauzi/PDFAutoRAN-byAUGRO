@@ -22,6 +22,13 @@ const env = {
   midtransClientKey: process.env.MIDTRANS_CLIENT_KEY,
   midtransMerchantId: process.env.MIDTRANS_MERCHANT_ID,
   midtransIsProduction: process.env.MIDTRANS_IS_PRODUCTION === 'true',
+
+  // ========================
+  // EMAIL CONFIG
+  // ========================
+  mailUser: process.env.MAIL_USER,
+  mailPass: process.env.MAIL_PASS,
+  mailFrom: process.env.MAIL_FROM || process.env.MAIL_USER,
 };
 
 module.exports = env;
