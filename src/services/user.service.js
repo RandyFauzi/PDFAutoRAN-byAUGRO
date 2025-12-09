@@ -168,28 +168,42 @@ async function addUserCredits(userId, amount) {
 
 async function deleteUser(userId) {
   const id = Number(userId);
+  if (Number.isNaN(id)) {
+    throw new Error('userId tidak valid di deleteUser');
+  }
 
   return prisma.$transaction(async (tx) => {
-    // Hapus semua data terkait user terlebih dahulu
+    // 1. Hapus token verifikasi email
+    await tx.emailVerificationToken.deleteMany({
+      where: { userId: id },
+    });
+
+    // 2. Hapus API key user
     await tx.apiKey.deleteMany({
       where: { userId: id },
     });
 
-    await tx.subscription.deleteMany({
-      where: { userId: id },
-    });
-
+    // 3. Hapus usage logs
     await tx.usageLog.deleteMany({
       where: { userId: id },
     });
 
-    // Kalau kamu punya tabel lain yang pakai userId sebagai FK,
-    // tambahkan di sini juga dengan deleteMany(...)
+    // 4. Hapus transaksi
+    await tx.transaction.deleteMany({
+      where: { userId: id },
+    });
 
-    // Terakhir, hapus user
-    return tx.user.delete({
+    // 5. Hapus subscription
+    await tx.subscription.deleteMany({
+      where: { userId: id },
+    });
+
+    // 6. Terakhir: hapus user
+    const deleted = await tx.user.delete({
       where: { id },
     });
+
+    return deleted;
   });
 }
 

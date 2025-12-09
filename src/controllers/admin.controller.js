@@ -171,14 +171,19 @@ async function deleteUser(req, res) {
     const userId = parseInt(req.params.id, 10);
 
     if (Number.isNaN(userId)) {
-      return res.status(400).json({ message: 'ID user tidak valid.' });
+      return res.status(400).json({
+        message: 'userId tidak valid.',
+      });
     }
 
-    await userService.deleteUser(userId);
+    const deleted = await userService.deleteUser(userId);
 
     return res.json({
       message: 'User berhasil dihapus.',
-      data: { id: userId },
+      data: {
+        id: deleted.id,
+        email: deleted.email,
+      },
     });
   } catch (err) {
     console.error('Admin deleteUser error:', err);

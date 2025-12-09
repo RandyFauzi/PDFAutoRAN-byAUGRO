@@ -35,6 +35,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.set('trust proxy', 1);
 app.use('/api/v1', danaRoutes);
+app.use('/api/v1/admin', adminRoutes);
 
 // Logging (development only)
 if (env.nodeEnv === 'development') {
