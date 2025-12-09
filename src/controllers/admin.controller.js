@@ -170,22 +170,18 @@ async function deleteUser(req, res) {
   try {
     const userId = parseInt(req.params.id, 10);
 
-    if (!userId || Number.isNaN(userId)) {
-      return res.status(400).json({
-        message: 'ID user tidak valid.',
-      });
+    if (Number.isNaN(userId)) {
+      return res
+        .status(400)
+        .json({ message: 'ID user tidak valid.' });
     }
 
-    // Opsional: cegah hapus super admin ID 1 kalau mau
-    // if (userId === 1) {
-    //   return res.status(403).json({ message: 'User ini tidak boleh dihapus.' });
-    // }
-
+    // Panggil service untuk hapus user
     await userService.deleteUser(userId);
 
     return res.json({
-      success: true,
       message: 'User berhasil dihapus.',
+      data: { id: userId },
     });
   } catch (err) {
     console.error('Admin deleteUser error:', err);
