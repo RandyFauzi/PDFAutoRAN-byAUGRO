@@ -226,64 +226,6 @@ async function mergePdf(req, res) {
   }
 }
 
-// =========================
-// HELPER: PARSE "pages"
-// =========================
-
-// Terima input: "1,2", "1-3,5", 2, [1,2,4], dst.
-// Return: array unik [1,2,3,5] (1-based).
-function parsePagesToArray(pages) {
-  // Kalau sudah array -> normalisasi ke number
-  if (Array.isArray(pages)) {
-    return pages
-      .map((p) => Number(p))
-      .filter((n) => Number.isFinite(n) && n >= 1);
-  }
-
-  // Kalau number tunggal
-  if (typeof pages === 'number') {
-    return Number.isFinite(pages) && pages >= 1 ? [pages] : [];
-  }
-
-  // Kalau string "1,2" atau "1-3,5"
-  if (typeof pages === 'string') {
-    return pages
-      .split(',')
-      .flatMap((part) => {
-        const trimmed = part.trim();
-        if (!trimmed) return [];
-
-        // Range: "2-4"
-        if (trimmed.includes('-')) {
-          const [startStr, endStr] = trimmed.split('-').map((s) => s.trim());
-          const start = parseInt(startStr, 10);
-          const end = parseInt(endStr, 10);
-          if (!Number.isFinite(start) || !Number.isFinite(end)) return [];
-          const from = Math.min(start, end);
-          const to = Math.max(start, end);
-          return Array.from({ length: to - from + 1 }, (_, i) => from + i);
-        }
-
-        // Single number: "3"
-        const n = parseInt(trimmed, 10);
-        return Number.isFinite(n) && n >= 1 ? [n] : [];
-      })
-      // unik + urut + >=1
-      .filter((v, i, arr) => v >= 1 && arr.indexOf(v) === i)
-      .sort((a, b) => a - b);
-  }
-
-  // Format lain -> kosong
-  return [];
-}
-
-
-function parsePositiveInt(value, defaultValue) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return defaultValue;
-  if (n <= 0) return defaultValue;
-  return Math.floor(n);
-}
 
 // =========================
 // CONTROLLER: STAMP PNG KE PDF
@@ -296,107 +238,53 @@ async function stampPdf(req, res) {
     const {
       pdfUrl,
       imageUrl,
-      page,    // mode lama: satu halaman
-      pages,   // mode baru: jumlah halaman pertama
+      page = 1,
       x,
       y,
       width,
       height,
       fileName,
-      stamps,  // mode advanced: array object, tiap halaman bisa beda
     } = req.body;
 
-    // Validasi minimal
+    // Validasi input minimal
     if (!pdfUrl || !imageUrl) {
       return res.status(400).json({
         message: 'Field "pdfUrl" dan "imageUrl" wajib diisi.',
       });
     }
 
-    // Download PDF & Gambar
+    // Download PDF & PNG sebagai Buffer
     const pdfBuffer = await downloadAsBuffer(String(pdfUrl).trim(), 'pdf');
     const imageBuffer = await downloadAsBuffer(
       String(imageUrl).trim(),
       'image',
     );
 
-    // Kita perlu tahu jumlah halaman utk mode "pages"
-    const pdfDocTemp = await PDFDocument.load(pdfBuffer, {
-      ignoreEncryption: true,
-    });
-    const totalPages = pdfDocTemp.getPageCount();
+    const pageIndex = Number(page) > 0 ? Number(page) - 1 : 0;
 
-    // Normalisasi ukuran & posisi default
-    const baseX = x != null ? Number(x) : 0;
-    const baseY = y != null ? Number(y) : 0;
-    const baseWidth = width != null ? Number(width) : undefined;
-    const baseHeight = height != null ? Number(height) : undefined;
+    // Konversi koordinat & ukuran ke number (kalau ada)
+    const posX = x != null ? Number(x) : 0;
+    const posY = y != null ? Number(y) : 0;
+    const w = width != null ? Number(width) : undefined;
+    const h = height != null ? Number(height) : undefined;
 
-    let options;
-
-    // ============================================
-    // 1) MODE ADVANCED: stamps = [{ page, x,y,width,height }, ...]
-    // ============================================
-    if (Array.isArray(stamps) && stamps.length > 0) {
-      options = stamps.map((s) => {
-        const p = parsePositiveInt(s.page || 1, 1); // 1-based
-        return {
-          pageIndex: p - 1, // 0-based
-          x: s.x != null ? Number(s.x) : baseX,
-          y: s.y != null ? Number(s.y) : baseY,
-          width:
-            s.width != null ? Number(s.width) : baseWidth,
-          height:
-            s.height != null ? Number(s.height) : baseHeight,
-        };
-      });
-    }
-
-    // ============================================
-    // 2) MODE "pages" = jumlah halaman pertama
-    //    contoh: pages = 2 → stamp di halaman 1 dan 2
-    // ============================================
-    else if (pages !== undefined) {
-      const count = parsePositiveInt(pages, 1); // misal "2" → 2
-      // Jangan lebih dari total halaman
-      const maxPages = Math.min(count, totalPages);
-
-      options = [];
-      for (let i = 0; i < maxPages; i += 1) {
-        options.push({
-          pageIndex: i, // 0..maxPages-1
-          x: baseX,
-          y: baseY,
-          width: baseWidth,
-          height: baseHeight,
-        });
-      }
-    }
-
-    // ============================================
-    // 3) MODE LAMA: 1 halaman saja (field "page")
-    // ============================================
-    else {
-      const p = parsePositiveInt(page || 1, 1); // default 1
-      options = {
-        pageIndex: p - 1, // 0-based
-        x: baseX,
-        y: baseY,
-        width: baseWidth,
-        height: baseHeight,
-      };
-    }
-
-    // Proses stamping di service
-    const stampedRaw = await pdfService.stampImageOnPdf(
+    // Proses stamp lewat service
+    const stampedBufferRaw = await pdfService.stampImageOnPdf(
       pdfBuffer,
       imageBuffer,
-      options,
+      {
+        pageIndex,
+        x: posX,
+        y: posY,
+        width: w,
+        height: h,
+      },
     );
 
-    const stamped = Buffer.isBuffer(stampedRaw)
-      ? stampedRaw
-      : Buffer.from(stampedRaw);
+    // Pastikan bentuknya Buffer Node
+    const stampedBuffer = Buffer.isBuffer(stampedBufferRaw)
+      ? stampedBufferRaw
+      : Buffer.from(stampedBufferRaw);
 
     const safeName =
       (fileName && String(fileName).trim()) || 'stamped-document';
@@ -408,9 +296,9 @@ async function stampPdf(req, res) {
       'Content-Disposition',
       `inline; filename="${sanitizedName}.pdf"`,
     );
-    res.setHeader('Content-Length', stamped.length);
+    res.setHeader('Content-Length', stampedBuffer.length);
 
-    return res.end(stamped);
+    return res.end(stampedBuffer);
   } catch (err) {
     console.error('Error stampPdf:', err);
     return res.status(500).json({
@@ -419,9 +307,6 @@ async function stampPdf(req, res) {
     });
   }
 }
-
-
-
 
 // =========================
 // CONTROLLER: COMPRESS PDF
