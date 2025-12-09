@@ -2,27 +2,44 @@
 const nodemailer = require('nodemailer');
 const env = require('../config/env');
 
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: env.mailUser,
-    pass: env.mailPass,
-  },
-});
+let transporter = null;
 
-/**
- * Kirim email verifikasi
- * @param {Object} params
- * @param {string} params.to   - email tujuan
- * @param {string} params.link - link verifikasi lengkap
- */
+// Helper untuk inisialisasi transporter sekali saja
+function getTransporter() {
+  if (transporter) return transporter;
+
+  if (!env.mailUser || !env.mailPass) {
+    console.warn(
+      '[EmailService] MAIL_USER atau MAIL_PASS belum di-set. Email tidak akan terkirim.',
+      { mailUser: env.mailUser, mailFrom: env.mailFrom }
+    );
+    return null;
+  }
+
+  transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: env.mailUser,
+      pass: env.mailPass,
+    },
+  });
+
+  return transporter;
+}
+
 async function sendVerificationEmail({ to, link }) {
   try {
     const tx = getTransporter();
-    if (!tx) return;
+    if (!tx) {
+      // sudah di-warn di getTransporter
+      return;
+    }
 
     if (!to || !link) {
-      console.warn('[EmailService] to/link kosong, email tidak dikirim.', { to, link });
+      console.warn('[EmailService] to/link kosong, email tidak dikirim.', {
+        to,
+        link,
+      });
       return;
     }
 
@@ -33,13 +50,15 @@ async function sendVerificationEmail({ to, link }) {
       to,
       subject: 'Verifikasi Akun PDF AUTORAN',
       html: `
-      <div style="background:#f9fafb;padding:32px 0;font-family:system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;">
+      <div style="background:#f9fafb;padding:32px 0;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
         <div style="max-width:520px;margin:0 auto;background:#ffffff;border-radius:12px;box-shadow:0 10px 30px rgba(15,23,42,0.08);overflow:hidden;">
           
           <div style="text-align:center;padding:24px 24px 16px;border-bottom:1px solid #e5e7eb;">
             <img src="${logoUrl}" alt="PDF AUTORAN" style="width:56px;height:56px;border-radius:16px;object-fit:cover;margin-bottom:8px;">
             <div style="font-size:18px;font-weight:600;color:#111827;">PDF AUTORAN</div>
-            <div style="font-size:13px;color:#6b7280;margin-top:4px;">API Service untuk kebutuhan proses PDF Anda</div>
+            <div style="font-size:13px;color:#6b7280;margin-top:4px;">
+              API Service untuk kebutuhan proses PDF Anda
+            </div>
           </div>
 
           <div style="padding:24px 24px 20px;">
