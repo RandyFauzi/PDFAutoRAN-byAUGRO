@@ -296,81 +296,98 @@ async function stampPdf(req, res) {
     const {
       pdfUrl,
       imageUrl,
-      page,    // mode lama (single page)
-      pages,   // mode baru: "1,2" / "1-3,5"
+      page,    // mode lama: satu halaman
+      pages,   // mode baru: jumlah halaman pertama
       x,
       y,
       width,
       height,
       fileName,
-      stamps,  // advanced: array object posisi berbeda-beda
+      stamps,  // mode advanced: array object, tiap halaman bisa beda
     } = req.body;
 
+    // Validasi minimal
     if (!pdfUrl || !imageUrl) {
       return res.status(400).json({
         message: 'Field "pdfUrl" dan "imageUrl" wajib diisi.',
       });
     }
 
-    // 1. Download PDF & Gambar
+    // Download PDF & Gambar
     const pdfBuffer = await downloadAsBuffer(String(pdfUrl).trim(), 'pdf');
     const imageBuffer = await downloadAsBuffer(
       String(imageUrl).trim(),
       'image',
     );
 
-    // 2. DEBUG: cek jumlah halaman PDF
-    const docForDebug = await PDFDocument.load(pdfBuffer, { ignoreEncryption: true });
-    const totalPages = docForDebug.getPageCount();
-    console.log('[STAMP] PDF total pages:', totalPages);
-    console.log('[STAMP] raw pages field:', pages);
-    console.log('[STAMP] raw page field:', page);
+    // Kita perlu tahu jumlah halaman utk mode "pages"
+    const pdfDocTemp = await PDFDocument.load(pdfBuffer, {
+      ignoreEncryption: true,
+    });
+    const totalPages = pdfDocTemp.getPageCount();
+
+    // Normalisasi ukuran & posisi default
+    const baseX = x != null ? Number(x) : 0;
+    const baseY = y != null ? Number(y) : 0;
+    const baseWidth = width != null ? Number(width) : undefined;
+    const baseHeight = height != null ? Number(height) : undefined;
 
     let options;
 
+    // ============================================
     // 1) MODE ADVANCED: stamps = [{ page, x,y,width,height }, ...]
+    // ============================================
     if (Array.isArray(stamps) && stamps.length > 0) {
-      options = stamps.map((s) => ({
-        pageIndex: (s.page || 1) - 1,
-        x: s.x != null ? Number(s.x) : Number(x || 0),
-        y: s.y != null ? Number(s.y) : Number(y || 0),
-        width: s.width != null ? Number(s.width) : (width != null ? Number(width) : undefined),
-        height: s.height != null ? Number(s.height) : (height != null ? Number(height) : undefined),
-      }));
+      options = stamps.map((s) => {
+        const p = parsePositiveInt(s.page || 1, 1); // 1-based
+        return {
+          pageIndex: p - 1, // 0-based
+          x: s.x != null ? Number(s.x) : baseX,
+          y: s.y != null ? Number(s.y) : baseY,
+          width:
+            s.width != null ? Number(s.width) : baseWidth,
+          height:
+            s.height != null ? Number(s.height) : baseHeight,
+        };
+      });
     }
 
-    // 2) MODE "pages": "1,2" / "1-3,5"
+    // ============================================
+    // 2) MODE "pages" = jumlah halaman pertama
+    //    contoh: pages = 2 → stamp di halaman 1 dan 2
+    // ============================================
     else if (pages !== undefined) {
-      let pageNumbers = parsePagesToArray(pages);
-      if (pageNumbers.length === 0) {
-        pageNumbers = [1];
+      const count = parsePositiveInt(pages, 1); // misal "2" → 2
+      // Jangan lebih dari total halaman
+      const maxPages = Math.min(count, totalPages);
+
+      options = [];
+      for (let i = 0; i < maxPages; i += 1) {
+        options.push({
+          pageIndex: i, // 0..maxPages-1
+          x: baseX,
+          y: baseY,
+          width: baseWidth,
+          height: baseHeight,
+        });
       }
-
-      console.log('[STAMP] parsed pages:', pageNumbers);
-
-      options = pageNumbers.map((p) => ({
-        pageIndex: p - 1,
-        x: x != null ? Number(x) : 0,
-        y: y != null ? Number(y) : 0,
-        width: width != null ? Number(width) : undefined,
-        height: height != null ? Number(height) : undefined,
-      }));
     }
 
-    // 3) MODE LAMA: 1 page saja
+    // ============================================
+    // 3) MODE LAMA: 1 halaman saja (field "page")
+    // ============================================
     else {
+      const p = parsePositiveInt(page || 1, 1); // default 1
       options = {
-        pageIndex: Number(page || 1) - 1,
-        x: x != null ? Number(x) : 0,
-        y: y != null ? Number(y) : 0,
-        width: width != null ? Number(width) : undefined,
-        height: height != null ? Number(height) : undefined,
+        pageIndex: p - 1, // 0-based
+        x: baseX,
+        y: baseY,
+        width: baseWidth,
+        height: baseHeight,
       };
     }
 
-    console.log('[STAMP] final options:', options);
-
-    // Proses stamping
+    // Proses stamping di service
     const stampedRaw = await pdfService.stampImageOnPdf(
       pdfBuffer,
       imageBuffer,
@@ -402,6 +419,7 @@ async function stampPdf(req, res) {
     });
   }
 }
+
 
 
 
