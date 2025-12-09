@@ -226,18 +226,58 @@ async function mergePdf(req, res) {
   }
 }
 
+// =========================
+// HELPER: PARSE "pages"
+// =========================
 
+// Terima input: "1,2", "1-3,5", 2, [1,2,4], dst.
+// Return: array unik [1,2,3,5] (1-based).
 function parsePagesToArray(pages) {
-  if (!pages) return [];
+  // Kalau sudah array -> normalisasi ke number
+  if (Array.isArray(pages)) {
+    return pages
+      .map((p) => Number(p))
+      .filter((n) => Number.isFinite(n) && n >= 1);
+  }
 
-  const raw = pages.toString();
-  return raw
-    .split(',')
-    .map((p) => p.trim())
-    .filter(Boolean)
-    .map((p) => Number(p))
-    .filter((n) => Number.isFinite(n) && n > 0); // hanya angka > 0
+  // Kalau number tunggal
+  if (typeof pages === 'number') {
+    return Number.isFinite(pages) && pages >= 1 ? [pages] : [];
+  }
+
+  // Kalau string "1,2" atau "1-3,5"
+  if (typeof pages === 'string') {
+    return pages
+      .split(',')
+      .flatMap((part) => {
+        const trimmed = part.trim();
+        if (!trimmed) return [];
+
+        // Range: "2-4"
+        if (trimmed.includes('-')) {
+          const [startStr, endStr] = trimmed.split('-').map((s) => s.trim());
+          const start = parseInt(startStr, 10);
+          const end = parseInt(endStr, 10);
+          if (!Number.isFinite(start) || !Number.isFinite(end)) return [];
+          const from = Math.min(start, end);
+          const to = Math.max(start, end);
+          return Array.from({ length: to - from + 1 }, (_, i) => from + i);
+        }
+
+        // Single number: "3"
+        const n = parseInt(trimmed, 10);
+        return Number.isFinite(n) && n >= 1 ? [n] : [];
+      })
+      // unik + urut + >=1
+      .filter((v, i, arr) => v >= 1 && arr.indexOf(v) === i)
+      .sort((a, b) => a - b);
+  }
+
+  // Format lain -> kosong
+  return [];
 }
+
+
 
 // =========================
 // CONTROLLER: STAMP PNG KE PDF
@@ -250,85 +290,77 @@ async function stampPdf(req, res) {
     const {
       pdfUrl,
       imageUrl,
-      page,
-      pages,   // <--- string "1,2" dari client
+      page,    // mode lama (single page)
+      pages,   // mode baru: "1,2" / "1-3,5"
       x,
       y,
       width,
       height,
       fileName,
-      stamps,  // <--- mode advanced kalau mau array manual
+      stamps,  // advanced: array object posisi berbeda-beda
     } = req.body;
 
+    // Validasi minimal
     if (!pdfUrl || !imageUrl) {
       return res.status(400).json({
         message: 'Field "pdfUrl" dan "imageUrl" wajib diisi.',
       });
     }
 
-    // Download PDF + Gambar
+    // Download PDF & Gambar
     const pdfBuffer = await downloadAsBuffer(String(pdfUrl).trim(), 'pdf');
-    const imageBuffer = await downloadAsBuffer(String(imageUrl).trim(), 'image');
+    const imageBuffer = await downloadAsBuffer(
+      String(imageUrl).trim(),
+      'image',
+    );
 
     let options;
 
-    // =====================================================
-    // 1) MODE ADVANCED: client kirim stamps[] sendiri
-    //    [
-    //      { page: 1, x: 100, y: 200, width: 80, height: 30 },
-    //      { page: 3, x: 120, y: 210 }
-    //    ]
-    // =====================================================
+    // ============================================
+    // 1) MODE ADVANCED: stamps = [{ page, x,y,width,height }, ...]
+    // ============================================
     if (Array.isArray(stamps) && stamps.length > 0) {
-      options = stamps.map((s, idx) => {
-        if (!s.page) {
-          throw new Error(`Stamp #${idx} missing 'page'`);
-        }
-        return {
-          pageIndex: Number(s.page) - 1,
-          x: s.x != null ? Number(s.x) : Number(x || 0),
-          y: s.y != null ? Number(s.y) : Number(y || 0),
-          width: s.width != null ? Number(s.width) : (width != null ? Number(width) : undefined),
-          height: s.height != null ? Number(s.height) : (height != null ? Number(height) : undefined),
-        };
-      });
+      options = stamps.map((s) => ({
+        pageIndex: (s.page || 1) - 1, // 1-based -> 0-based
+        x: s.x != null ? Number(s.x) : Number(x || 0),
+        y: s.y != null ? Number(s.y) : Number(y || 0),
+        width: s.width != null ? Number(s.width) : (width != null ? Number(width) : undefined),
+        height: s.height != null ? Number(s.height) : (height != null ? Number(height) : undefined),
+      }));
     }
 
-    // =====================================================
-    // 2) MODE SIMPLE: pages = "1,2" → stamp di >1 halaman
-    // =====================================================
-    else if (pages) {
-      const pageNumbers = parsePagesToArray(pages);  // [1,2,...]
-
-      if (!pageNumbers.length) {
-        return res.status(400).json({
-          message: 'Field "pages" tidak valid. Contoh: "1,2" atau "2,3".',
-        });
+    // ============================================
+    // 2) MODE "pages": "1,2" / "1-3,5"
+    // ============================================
+    else if (pages !== undefined) {
+      let pageNumbers = parsePagesToArray(pages);
+      if (pageNumbers.length === 0) {
+        pageNumbers = [1]; // default minimal halaman 1
       }
 
       options = pageNumbers.map((p) => ({
-        pageIndex: p - 1,
-        x: Number(x || 0),
-        y: Number(y || 0),
+        pageIndex: p - 1, // 1-based -> 0-based
+        x: x != null ? Number(x) : 0,
+        y: y != null ? Number(y) : 0,
         width: width != null ? Number(width) : undefined,
         height: height != null ? Number(height) : undefined,
       }));
     }
 
-    // =====================================================
-    // 3) MODE LEGACY: hanya 1 page (pakai field "page")
-    // =====================================================
+    // ============================================
+    // 3) MODE LAMA: 1 page saja (field "page")
+    // ============================================
     else {
       options = {
         pageIndex: Number(page || 1) - 1,
-        x: Number(x || 0),
-        y: Number(y || 0),
+        x: x != null ? Number(x) : 0,
+        y: y != null ? Number(y) : 0,
         width: width != null ? Number(width) : undefined,
         height: height != null ? Number(height) : undefined,
       };
     }
 
-    // Proses stamping
+    // Proses stamping (service sekarang sudah support multi-options)
     const stampedRaw = await pdfService.stampImageOnPdf(
       pdfBuffer,
       imageBuffer,
@@ -360,6 +392,7 @@ async function stampPdf(req, res) {
     });
   }
 }
+
 
 
 // =========================
