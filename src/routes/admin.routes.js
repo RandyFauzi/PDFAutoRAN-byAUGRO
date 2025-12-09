@@ -38,6 +38,16 @@ router.patch(
   adminController.updateUserCredits
 );
 
+// HAPUS USER
+// DELETE /api/v1/admin/users/:id
+router.delete(
+  '/users/:id',
+  authMiddleware,
+  adminMiddleware,
+  adminController.deleteUser
+);
+
+
 // ------------------------------------------------------
 // DEBUG: jalankan job reset subscription secara manual
 // POST /api/v1/admin/debug/run-reset

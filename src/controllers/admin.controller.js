@@ -161,6 +161,43 @@ async function updateUserCredits(req, res) {
 }
 
 /**
+ * DELETE /api/v1/admin/users/:id
+ *
+ * Menghapus user dari sistem.
+ * Catatan: pastikan service userService.deleteUser(userId) sudah ada.
+ */
+async function deleteUser(req, res) {
+  try {
+    const userId = parseInt(req.params.id, 10);
+
+    if (!userId || Number.isNaN(userId)) {
+      return res.status(400).json({
+        message: 'ID user tidak valid.',
+      });
+    }
+
+    // Opsional: cegah hapus super admin ID 1 kalau mau
+    // if (userId === 1) {
+    //   return res.status(403).json({ message: 'User ini tidak boleh dihapus.' });
+    // }
+
+    await userService.deleteUser(userId);
+
+    return res.json({
+      success: true,
+      message: 'User berhasil dihapus.',
+    });
+  } catch (err) {
+    console.error('Admin deleteUser error:', err);
+    return res
+      .status(500)
+      .json({ message: 'Gagal menghapus user (admin).' });
+  }
+}
+
+
+
+/**
  * NEW (opsional, tapi sangat berguna untuk testing)
  * POST /api/v1/admin/subscriptions/reset-now
  *
@@ -185,5 +222,6 @@ module.exports = {
   listUsers,
   updateUserPlan,
   updateUserCredits,
-  runSubscriptionResetNow, // NEW export
+  deleteUser,
+  runSubscriptionResetNow,
 };
