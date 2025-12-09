@@ -238,53 +238,63 @@ async function stampPdf(req, res) {
     const {
       pdfUrl,
       imageUrl,
-      page = 1,
+      page,
       x,
       y,
       width,
       height,
       fileName,
+      stamps,   // <-- mode baru
     } = req.body;
 
-    // Validasi input minimal
     if (!pdfUrl || !imageUrl) {
       return res.status(400).json({
         message: 'Field "pdfUrl" dan "imageUrl" wajib diisi.',
       });
     }
 
-    // Download PDF & PNG sebagai Buffer
+    // Download PDF + Gambar
     const pdfBuffer = await downloadAsBuffer(String(pdfUrl).trim(), 'pdf');
-    const imageBuffer = await downloadAsBuffer(
-      String(imageUrl).trim(),
-      'image',
-    );
+    const imageBuffer = await downloadAsBuffer(String(imageUrl).trim(), 'image');
 
-    const pageIndex = Number(page) > 0 ? Number(page) - 1 : 0;
+    let options;
 
-    // Konversi koordinat & ukuran ke number (kalau ada)
-    const posX = x != null ? Number(x) : 0;
-    const posY = y != null ? Number(y) : 0;
-    const w = width != null ? Number(width) : undefined;
-    const h = height != null ? Number(height) : undefined;
+    // ============================================
+    // MODE BARU → multiple stamps
+    // ============================================
+    if (Array.isArray(stamps) && stamps.length > 0) {
+      options = stamps.map((s) => ({
+        pageIndex: (s.page || 1) - 1,
+        x: Number(s.x || 0),
+        y: Number(s.y || 0),
+        width: s.width != null ? Number(s.width) : undefined,
+        height: s.height != null ? Number(s.height) : undefined,
+      }));
+    }
 
-    // Proses stamp lewat service
-    const stampedBufferRaw = await pdfService.stampImageOnPdf(
+    // ============================================
+    // MODE LAMA → 1 stamp
+    // ============================================
+    else {
+      options = {
+        pageIndex: Number(page || 1) - 1,
+        x: Number(x || 0),
+        y: Number(y || 0),
+        width: width != null ? Number(width) : undefined,
+        height: height != null ? Number(height) : undefined,
+      };
+    }
+
+    // Proses stamping
+    const stampedRaw = await pdfService.stampImageOnPdf(
       pdfBuffer,
       imageBuffer,
-      {
-        pageIndex,
-        x: posX,
-        y: posY,
-        width: w,
-        height: h,
-      },
+      options
     );
 
-    // Pastikan bentuknya Buffer Node
-    const stampedBuffer = Buffer.isBuffer(stampedBufferRaw)
-      ? stampedBufferRaw
-      : Buffer.from(stampedBufferRaw);
+    const stamped = Buffer.isBuffer(stampedRaw)
+      ? stampedRaw
+      : Buffer.from(stampedRaw);
 
     const safeName =
       (fileName && String(fileName).trim()) || 'stamped-document';
@@ -294,11 +304,11 @@ async function stampPdf(req, res) {
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader(
       'Content-Disposition',
-      `inline; filename="${sanitizedName}.pdf"`,
+      `inline; filename="${sanitizedName}.pdf"`
     );
-    res.setHeader('Content-Length', stampedBuffer.length);
+    res.setHeader('Content-Length', stamped.length);
 
-    return res.end(stampedBuffer);
+    return res.end(stamped);
   } catch (err) {
     console.error('Error stampPdf:', err);
     return res.status(500).json({
@@ -307,6 +317,7 @@ async function stampPdf(req, res) {
     });
   }
 }
+
 
 // =========================
 // CONTROLLER: COMPRESS PDF
