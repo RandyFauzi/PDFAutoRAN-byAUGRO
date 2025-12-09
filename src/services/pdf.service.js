@@ -34,13 +34,15 @@ async function stampImageOnPdf(pdfBuffer, imageBuffer, options = {}) {
   for (const opt of tasks) {
     if (!opt) continue;
 
-    // JANGAN pakai opt.pageIndex || 0
+    // JANGAN pakai "opt.pageIndex || 0" karena 0 itu falsy → selalu balik ke 0
     let idx = Number(opt.pageIndex);
-    if (!Number.isFinite(idx) || idx < 0) idx = 0;
+    if (!Number.isFinite(idx) || idx < 0) {
+      idx = 0;
+    }
 
-    // Kalau index di luar jumlah halaman, skip saja
+    // Kalau index di luar range halaman, skip aja
     if (idx >= pages.length) {
-      // console.warn(`[STAMP] Skip pageIndex ${idx}, total pages: ${pages.length}`);
+      console.warn(`[STAMP] Skip pageIndex ${idx}, total pages: ${pages.length}`);
       continue;
     }
 
