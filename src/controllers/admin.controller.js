@@ -171,12 +171,9 @@ async function deleteUser(req, res) {
     const userId = parseInt(req.params.id, 10);
 
     if (Number.isNaN(userId)) {
-      return res
-        .status(400)
-        .json({ message: 'ID user tidak valid.' });
+      return res.status(400).json({ message: 'ID user tidak valid.' });
     }
 
-    // Panggil service untuk hapus user
     await userService.deleteUser(userId);
 
     return res.json({
@@ -190,6 +187,7 @@ async function deleteUser(req, res) {
       .json({ message: 'Gagal menghapus user (admin).' });
   }
 }
+
 
 
 
@@ -218,6 +216,6 @@ module.exports = {
   listUsers,
   updateUserPlan,
   updateUserCredits,
-  deleteUser,
   runSubscriptionResetNow,
+  deleteUser, // pastikan ini ada
 };
