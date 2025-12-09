@@ -1,3 +1,4 @@
+// src/services/pdf.service.js
 const { PDFDocument } = require('pdf-lib');
 
 /**
@@ -27,20 +28,35 @@ async function stampImageOnPdf(pdfBuffer, imageBuffer, options = {}) {
 
   const pages = pdfDoc.getPages();
 
-  // ⚡ Normalisasi: jika bukan array → jadikan array
+  // Normalisasi: jika bukan array → jadikan array
   const tasks = Array.isArray(options) ? options : [options];
 
   for (const opt of tasks) {
     if (!opt) continue;
 
-    const page = pages[opt.pageIndex || 0] || pages[0];
+    // JANGAN pakai opt.pageIndex || 0
+    let idx = Number(opt.pageIndex);
+    if (!Number.isFinite(idx) || idx < 0) idx = 0;
 
-    const width = opt.width || img.width;
-    const height = opt.height || img.height;
+    // Kalau index di luar jumlah halaman, skip saja
+    if (idx >= pages.length) {
+      // console.warn(`[STAMP] Skip pageIndex ${idx}, total pages: ${pages.length}`);
+      continue;
+    }
+
+    const page = pages[idx];
+
+    const width =
+      opt.width != null ? Number(opt.width) : img.width;
+    const height =
+      opt.height != null ? Number(opt.height) : img.height;
+
+    const x = opt.x != null ? Number(opt.x) : 0;
+    const y = opt.y != null ? Number(opt.y) : 0;
 
     page.drawImage(img, {
-      x: opt.x || 0,
-      y: opt.y || 0,
+      x,
+      y,
       width,
       height,
     });
