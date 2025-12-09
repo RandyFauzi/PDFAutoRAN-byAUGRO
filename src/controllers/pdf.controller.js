@@ -278,6 +278,12 @@ function parsePagesToArray(pages) {
 }
 
 
+function parsePositiveInt(value, defaultValue) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return defaultValue;
+  if (n <= 0) return defaultValue;
+  return Math.floor(n);
+}
 
 // =========================
 // CONTROLLER: STAMP PNG KE PDF
