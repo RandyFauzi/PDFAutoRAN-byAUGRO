@@ -225,24 +225,42 @@ async function verifyEmail(req, res) {
   }
 }
 
-
 // ========================================
 // GET /api/v1/auth/me
 // ========================================
 async function me(req, res) {
   try {
+    const userId = req.user?.id;
+
+    if (!userId) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    // Ambil data TERBARU langsung dari database
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        credits: true,
+        plan: true,
+        isVerified: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
+    if (!user) {
+      return res.status(404).json({ message: 'User tidak ditemukan.' });
+    }
+
     return res.json({
       message: 'Profil user.',
-      data: {
-        id: req.user.id,
-        email: req.user.email,
-      },
+      data: user,
     });
   } catch (err) {
     console.error('Me error:', err);
-    return res
-      .status(500)
-      .json({ message: 'Terjadi kesalahan pada server.' });
+    return res.status(500).json({ message: 'Terjadi kesalahan pada server.' });
   }
 }
 
