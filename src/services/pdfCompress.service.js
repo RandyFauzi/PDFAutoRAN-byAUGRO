@@ -2,6 +2,7 @@ const { spawn } = require('child_process');
 
 function compressPdfBuffer(inputBuffer, quality = 'medium') {
   const qualityMap = {
+    ultra: '/screen',
     low: '/screen',
     medium: '/ebook',
     high: '/printer',
@@ -20,20 +21,32 @@ function compressPdfBuffer(inputBuffer, quality = 'medium') {
 
       '-dDetectDuplicateImages=true',
       '-dCompressFonts=true',
-      '-dUseCropBox',
-      '-dPreserveEPSInfo=true',
 
       '-sOutputFile=-',
       '-',
     ];
+
+    // 🔥 EXTRA COMPRESSION
+    if (quality === 'ultra') {
+      args.push(
+        '-dDownsampleColorImages=true',
+        '-dDownsampleGrayImages=true',
+        '-dDownsampleMonoImages=true',
+        '-dColorImageResolution=72',
+        '-dGrayImageResolution=72',
+        '-dMonoImageResolution=72',
+        '-dJPEGQ=40',
+        '-dDiscardAllMetadata=true'
+      );
+    }
 
     const gs = spawn('gs', args);
 
     const chunks = [];
     let errText = '';
 
-    gs.stdout.on('data', (chunk) => chunks.push(chunk));
-    gs.stderr.on('data', (chunk) => (errText += chunk.toString()));
+    gs.stdout.on('data', (c) => chunks.push(c));
+    gs.stderr.on('data', (c) => (errText += c.toString()));
 
     gs.on('close', (code) => {
       if (code !== 0) {
