@@ -41,11 +41,15 @@ async function htmlToPdfBuffer(html) {
 
 
 function normalizeDriveUrl(url) {
-  const match = url.match(/\/file\/d\/([^/]+)\//);
+  if (typeof url !== 'string') return url;
+
+  const match = url.match(/\/d\/([a-zA-Z0-9_-]+)|id=([a-zA-Z0-9_-]+)/);
   if (!match) return url;
-  const fileId = match[1];
+
+  const fileId = match[1] || match[2];
   return `https://drive.google.com/uc?export=download&id=${fileId}`;
 }
+
 
 // Download URL (bisa Google Drive, bisa URL lain) -> Buffer
 
@@ -64,7 +68,7 @@ async function downloadAsBuffer(rawUrl, index) {
 
   for (const url of candidateUrls) {
     try {
-      console.log(`[MERGE] Mencoba download (index ${index}) dari: ${url}`);
+      console.log(`[PDF_MERGE][DOWNLOAD][${index}] ${url}`);
 
       const response = await axios.get(url, {
         responseType: 'arraybuffer',
@@ -80,6 +84,14 @@ async function downloadAsBuffer(rawUrl, index) {
       if (response.status < 200 || response.status >= 300) {
         lastError = new Error(
           `status ${response.status} saat mengakses ${url}`,
+        );
+        continue;
+      }
+      const contentType = response.headers['content-type'] || '';
+
+      if (contentType.includes('text/html')) {
+        lastError = new Error(
+          `URL ${url} mengembalikan HTML (bukan file). Pastikan file public dan berupa PDF`
         );
         continue;
       }
@@ -185,9 +197,13 @@ async function mergePdf(req, res) {
     // Buat PDF baru & merge
     const mergedPdf = await PDFDocument.create();
 
-    for (const pdfBuffer of pdfBuffers) {
-      const srcPdf = await PDFDocument.load(pdfBuffer, {
-        ignoreEncryption: true, // abaikan flag encryption "aneh" dari PDF publik
+    for (let i = 0; i < pdfBuffers.length; i++) {
+      const pdfBuffer = pdfBuffers[i];
+
+      const safePdfBuffer = ensurePdfBuffer(pdfBuffer, i, req.body.options || {});
+
+      const srcPdf = await PDFDocument.load(safePdfBuffer, {
+        ignoreEncryption: true,
       });
 
       const copiedPages = await mergedPdf.copyPages(
@@ -196,6 +212,7 @@ async function mergePdf(req, res) {
       );
       copiedPages.forEach((page) => mergedPdf.addPage(page));
     }
+
 
     const mergedBytes = await mergedPdf.save();
 
@@ -218,13 +235,47 @@ async function mergePdf(req, res) {
 
     return res.end(pdfBuffer);
   } catch (err) {
-    console.error('Error mergePdf:', err);
-    return res.status(500).json({
-      message: 'Terjadi kesalahan saat merge PDF.',
-      detail: err.message,
-    });
-  }
+      console.error('Error mergePdf:', err);
+
+      const statusCode =
+        err.message.includes('bukan PDF') ||
+        err.message.includes('HTML')
+          ? 400
+          : 500;
+
+      return res.status(statusCode).json({
+        message:
+          statusCode === 400
+            ? 'Salah satu file tidak valid untuk merge'
+            : 'Terjadi kesalahan saat merge PDF.',
+        detail: err.message,
+      });
+    }
+
 }
+
+function isPdfBuffer(buffer) {
+  if (!Buffer.isBuffer(buffer)) return false;
+
+  // Cek 5 byte pertama: %PDF-
+  const header = buffer.slice(0, 5).toString('utf8');
+  return header === '%PDF-';
+}
+
+function ensurePdfBuffer(buffer, index, options = {}) {
+  if (isPdfBuffer(buffer)) return buffer;
+
+  if (options.autoConvert === true) {
+    // ⏳ FUTURE:
+    // di sini nanti panggil service convert non-PDF → PDF
+    // return convertedPdfBuffer;
+  }
+
+  throw new Error(
+    `File pada index ${index} bukan PDF valid. Aktifkan auto-convert atau pastikan file sudah PDF.`
+  );
+}
+
 
 
 // =========================
