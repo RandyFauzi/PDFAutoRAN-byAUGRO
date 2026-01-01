@@ -91,7 +91,7 @@ async function downloadAsBuffer(rawUrl, index) {
 
       if (contentType.includes('text/html')) {
         lastError = new Error(
-          `URL ${url} mengembalikan HTML (bukan file). Pastikan file public dan berupa PDF`
+          `URL mengembalikan HTML (content-type: ${contentType}). Biasanya file Drive belum public / butuh login / link bukan direct download. URL: ${url}`
         );
         continue;
       }
@@ -200,11 +200,8 @@ async function mergePdf(req, res) {
     for (let i = 0; i < pdfBuffers.length; i++) {
       const pdfBuffer = pdfBuffers[i];
 
-      const safePdfBuffer = ensurePdfBuffer(pdfBuffer, i, req.body.options || {});
-
-      const srcPdf = await PDFDocument.load(safePdfBuffer, {
-        ignoreEncryption: true,
-      });
+      const safePdfBuffer = await normalizeToPdfBuffer(pdfBuffer, i, req.body.options || {});
+      const srcPdf = await PDFDocument.load(safePdfBuffer, { ignoreEncryption: true });
 
       const copiedPages = await mergedPdf.copyPages(
         srcPdf,
@@ -262,20 +259,70 @@ function isPdfBuffer(buffer) {
   return header === '%PDF-';
 }
 
-function ensurePdfBuffer(buffer, index, options = {}) {
-  if (isPdfBuffer(buffer)) return buffer;
+function detectFileType(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 8) return 'unknown';
 
-  if (options.autoConvert === true) {
-    // ⏳ FUTURE:
-    // di sini nanti panggil service convert non-PDF → PDF
-    // return convertedPdfBuffer;
+  // PDF: %PDF-
+  if (buffer.slice(0, 5).toString('utf8') === '%PDF-') return 'pdf';
+
+  // JPG: FF D8 FF
+  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return 'jpg';
+
+  // PNG: 89 50 4E 47 0D 0A 1A 0A
+  const pngSig = [0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a];
+  let isPng = true;
+  for (let i = 0; i < pngSig.length; i++) {
+    if (buffer[i] !== pngSig[i]) { isPng = false; break; }
+  }
+  if (isPng) return 'png';
+
+  return 'unknown';
+}
+
+async function imageToPdfBuffer(imageBuffer, type) {
+  const pdf = await PDFDocument.create();
+
+  let embedded;
+  if (type === 'jpg') embedded = await pdf.embedJpg(imageBuffer);
+  else if (type === 'png') embedded = await pdf.embedPng(imageBuffer);
+  else throw new Error(`Tipe gambar tidak didukung: ${type}`);
+
+  // Biar rapi ke A4 (optional)
+  // Kalau kamu mau sesuai ukuran asli gambar, pakai embedded.width/height langsung.
+  const page = pdf.addPage([embedded.width, embedded.height]);
+  page.drawImage(embedded, {
+    x: 0,
+    y: 0,
+    width: embedded.width,
+    height: embedded.height,
+  });
+
+  const bytes = await pdf.save();
+  return Buffer.from(bytes);
+}
+
+/**
+ * Normalize buffer apapun jadi PDF buffer:
+ * - PDF -> return buffer
+ * - JPG/PNG -> convert ke PDF
+ */
+async function normalizeToPdfBuffer(buffer, index, options = {}) {
+  const type = detectFileType(buffer);
+
+  if (type === 'pdf') return buffer;
+
+  // autoConvert default TRUE untuk jpg/png (biar sesuai target PDF.co)
+  const autoConvert = options.autoConvert !== false;
+
+  if (autoConvert && (type === 'jpg' || type === 'png')) {
+    console.log(`[PDF_MERGE][NORMALIZE][${index}] convert ${type} -> pdf`);
+    return imageToPdfBuffer(buffer, type);
   }
 
   throw new Error(
-    `File pada index ${index} bukan PDF valid. Aktifkan auto-convert atau pastikan file sudah PDF.`
+    `File pada index ${index} bukan PDF. Terdeteksi: ${type}. Aktifkan options.autoConvert untuk gambar.`
   );
 }
-
 
 
 // =========================
