@@ -1,25 +1,29 @@
+// src/services/pdfCompress.service.js
 const { spawn } = require('child_process');
 
+/**
+ * Compress PDF Buffer using Ghostscript (AGGRESSIVE IMAGE COMPRESSION)
+ *
+ * quality:
+ * - low     -> readable, ringan
+ * - medium  -> standar PDF.co
+ * - ultra   -> maksimum kompres (scan-heavy)
+ */
 function compressPdfBuffer(inputBuffer, quality = 'medium') {
   const qualityMap = {
     low: {
-      pdf: '/screen',
-      dpi: 72,
-      jpegQ: 40,
-    },
-    medium: {
-      pdf: '/ebook',
-      dpi: 120,
+      colorDpi: 96,
+      grayDpi: 96,
       jpegQ: 60,
     },
-    high: {
-      pdf: '/printer',
-      dpi: 300,
-      jpegQ: 85,
+    medium: {
+      colorDpi: 72,
+      grayDpi: 72,
+      jpegQ: 40,
     },
     ultra: {
-      pdf: '/screen',
-      dpi: 72,
+      colorDpi: 50,
+      grayDpi: 50,
       jpegQ: 30,
     },
   };
@@ -30,32 +34,51 @@ function compressPdfBuffer(inputBuffer, quality = 'medium') {
     const args = [
       '-sDEVICE=pdfwrite',
       '-dCompatibilityLevel=1.4',
-      `-dPDFSETTINGS=${q.pdf}`,
 
-      // ⬇️ INI YANG PENTING
+      // =============================
+      // FORCE IMAGE DOWNSAMPLING
+      // =============================
       '-dDownsampleColorImages=true',
       '-dDownsampleGrayImages=true',
       '-dDownsampleMonoImages=true',
 
-      `-dColorImageResolution=${q.dpi}`,
-      `-dGrayImageResolution=${q.dpi}`,
-      `-dMonoImageResolution=${q.dpi}`,
-
       '-dColorImageDownsampleType=/Bicubic',
       '-dGrayImageDownsampleType=/Bicubic',
-      '-dMonoImageDownsampleType=/Bicubic',
+      '-dMonoImageDownsampleType=/Subsample',
 
-      '-dJPEGQ=' + q.jpegQ,
+      `-dColorImageResolution=${q.colorDpi}`,
+      `-dGrayImageResolution=${q.grayDpi}`,
+      '-dMonoImageResolution=300',
 
+      // =============================
+      // JPEG RECOMPRESS
+      // =============================
+      `-dJPEGQ=${q.jpegQ}`,
+
+      // =============================
+      // EXTRA OPTIMIZATION
+      // =============================
       '-dDetectDuplicateImages=true',
       '-dCompressFonts=true',
+      '-dSubsetFonts=true',
+      '-dEmbedAllFonts=true',
+
+      // =============================
+      // SAFETY FLAGS
+      // =============================
       '-dNOPAUSE',
       '-dBATCH',
       '-dQUIET',
 
+      // =============================
+      // STDIN -> STDOUT
+      // =============================
       '-sOutputFile=-',
       '-',
     ];
+
+    console.log('[PDF_COMPRESS] Quality:', quality);
+    console.log('[PDF_COMPRESS] DPI:', q.colorDpi, 'JPEGQ:', q.jpegQ);
 
     const gs = spawn('gs', args);
 
@@ -67,9 +90,18 @@ function compressPdfBuffer(inputBuffer, quality = 'medium') {
 
     gs.on('close', (code) => {
       if (code !== 0) {
-        return reject(new Error(`Ghostscript error ${code}: ${errText}`));
+        return reject(
+          new Error(`Ghostscript error ${code}: ${errText || 'unknown error'}`)
+        );
       }
-      resolve(Buffer.concat(chunks));
+
+      const output = Buffer.concat(chunks);
+
+      if (!output.length) {
+        return reject(new Error('Ghostscript menghasilkan output kosong'));
+      }
+
+      resolve(output);
     });
 
     gs.stdin.write(inputBuffer);
@@ -77,4 +109,6 @@ function compressPdfBuffer(inputBuffer, quality = 'medium') {
   });
 }
 
-module.exports = { compressPdfBuffer };
+module.exports = {
+  compressPdfBuffer,
+};
